@@ -70,6 +70,17 @@ app.get("/auth/callback", async (req, res) => {
 // ─── Auth status ──────────────────────────────────────────────────────────────
 app.get("/auth/status", (req, res) => {
   res.json({ connected: !!storedAccessToken, store: SHOPIFY_STORE_DOMAIN });
+
+  // ─── Reveal token (save this to env var immediately!) ─────────────────────────
+app.get("/auth/token", (req, res) => {
+  const secret = req.query.secret;
+  if (secret !== process.env.SHOPIFY_CLIENT_SECRET) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  if (!storedAccessToken) {
+    return res.status(404).json({ error: "No token stored. Visit /auth/install first." });
+  }
+  res.json({ access_token: storedAccessToken });
 });
 
 // ─── GET /products ────────────────────────────────────────────────────────────
