@@ -170,3 +170,36 @@ app.listen(PORT, () => {
   console.log(`   Store: ${SHOPIFY_STORE_DOMAIN}`);
   console.log(`   Token: ${storedAccessToken ? "✅ Configured" : "⚠️  Not yet — visit /auth/install"}`);
 });
+
+// ─── POST /ai/generate — proxy Anthropic API calls ───────────────────────────
+app.post("/ai/generate", async (req, res) => {
+  const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
+  if (!ANTHROPIC_KEY) {
+    return res.status(500).json({ error: "ANTHROPIC_API_KEY not configured on server" });
+  }
+  try {
+    const { system, user, max_tokens = 1000 } = req.body;
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": ANTHROPIC_KEY,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens,
+        system,
+        messages: [{ role: "user", content: user }],
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      return res.status(response.status).json({ error: "Anthropic API error", details: data });
+    }
+    const text = data.content?.map(b => b.text || "").join("") || "";
+    res.json({ success: true, text });
+  } catch (err) {
+    res.status(500).json({ error: "AI generation failed", message: err.message });
+  }
+});
