@@ -7,16 +7,13 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
-// Allow requests from Claude.ai artifacts and any localhost for development
+// Allow all origins — this proxy is private (no sensitive data exposed)
+// Access is controlled by the Shopify token stored server-side
 app.use(cors({
-  origin: [
-    /\.claude\.ai$/,
-    /^https:\/\/claude\.ai$/,
-    /^http:\/\/localhost/,
-    /^https:\/\/rudrakailash\.com$/,
-  ],
+  origin: true, // Allow all origins including file:// local HTML files
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization", "X-Store-Domain", "X-Access-Token"],
+  credentials: true,
 }));
 
 app.use(express.json());
