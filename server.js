@@ -518,8 +518,60 @@ async function runSEOPipeline(product) {
   // ── CHANGE: description max_tokens raised to 4000 to prevent truncation ────
   const [description, metaTitle, metaDesc, tags] = await Promise.allSettled([
     callClaude(
-      `Senior content strategist for RudraKailash.com. E-E-A-T (Feb 2026). NEVER direct benefit claims. Use "Seekers often describe…", "In Vedic tradition…". Output clean HTML only.`,
-      `Full SEO description for "${product.title}". ${compSummary}. ${gapSummary}. Current: "${descPlain}". IMPORTANT: This is a Rudraksha bead product only — ignore any competitor content about silver pendants, jewellery specs, malas, or non-Rudraksha items. Focus strictly on the bead: mukhi count, Vedic significance, origin (Nepal or Java), RKRTL certification. Structure: <h2> seeker opening, <h3>Spiritual Significance & Vedic Context</h3>, <h3>What Seekers Experience</h3>, <h3>RKRTL Certification — X-Ray Verified</h3> (mention independent 3rd party lab, X-ray + microscope, E. Ganitrus genus confirmed, include: <a href="https://rkrtl.com/verify.html" target="_blank">Verify authenticity at RKRTL.com →</a>), <h3>Who Is Drawn to This Bead</h3> <ul>, <h3>How to Wear & Energise</h3>, <h3>FAQ</h3>. ONLY clean HTML.`,
+      `You are a senior SEO content strategist and Rudraksha subject-matter expert writing for RudraKailash.com. Every description must satisfy three frameworks simultaneously: (1) On-page SEO best practices — main keyword in first H2, main keyword in first paragraph within 100 words, 1–2% keyword density across the full text, LSI/secondary keywords in every H3, zero keyword stuffing; (2) Google E-E-A-T — demonstrate Experience via first-hand seeker testimony framing, Expertise via named Vedic scripture citations and botanical taxonomy, Authoritativeness via RKRTL as independent third-party laboratory, Trustworthiness via strict no-direct-health-claims policy; (3) Google February 2026 Discover Core Update — original non-generic perspective, thorough in-depth topic coverage, clear non-clickbait headings, Indian local audience relevance. Output clean HTML only. No markdown. No code fences. No preamble.`,
+      `Write a complete SEO product description for "${product.title}" on RudraKailash.com.
+
+MAIN KEYWORD: ${product.title}
+SECONDARY KEYWORDS: ${product.title} bead, buy ${product.title} online, authentic ${product.title}, RKRTL certified ${product.title}, ${product.title} price India, original ${product.title}
+
+MANDATORY ON-PAGE SEO RULES — FOLLOW EXACTLY:
+1. First HTML tag must be <h2> containing the exact phrase "${product.title}"
+2. First <p> must contain "${product.title}" naturally within the first 100 words
+3. Use "${product.title}" exactly 6–8 times total across the full description (approx 1–2% density)
+4. Every <h3> heading must contain a secondary or LSI keyword phrase
+5. Do NOT repeat "${product.title}" more than twice in any single section
+6. Vary phrasing naturally: "this bead", "the ${product.title} bead", "it" — do not repeat the exact keyword consecutively
+
+MANDATORY E-E-A-T RULES:
+- NEVER make direct benefit, health, or medical claims
+- Use only experience framing: "Seekers drawn to this bead often describe…", "In Vedic tradition, this bead is associated with…", "Those who wear it report a sense of…"
+- Cite Vedic scriptures by name: Shiva Purana, Padma Purana, or Skanda Purana where contextually appropriate
+- Include botanical name: Elaeocarpus ganitrus (the tree species)
+- Describe RKRTL strictly as an independent third-party testing laboratory — never imply it is affiliated with RudraKailash.com
+
+MANDATORY STRUCTURE — USE THIS EXACT HTML SKELETON:
+
+<h2>${product.title} — Authentic RKRTL-Certified Rudraksha Bead</h2>
+<p>[3–4 sentences: mention "${product.title}" in the first sentence, experience hook, origin context (Nepal/Java), why seekers choose this bead]</p>
+
+<h3>Spiritual Significance of ${product.title} in Vedic Tradition</h3>
+[Vedic context: ruling deity, planetary association, mantra if applicable, scripture citation, historical reverence — 2–3 paragraphs]
+
+<h3>What Seekers Describe About Wearing ${product.title}</h3>
+[Experience framing ONLY — "seekers report…", "those who incorporate this bead into daily practice often describe…" — NO direct claims — 1–2 paragraphs]
+
+<h3>RKRTL Certification — X-Ray Verified Authentic ${product.title}</h3>
+[Explain RKRTL lab process: X-ray imaging, microscope analysis, Elaeocarpus ganitrus species confirmation, natural origin verification, certificate issued — mention RKRTL is independent of RudraKailash.com]
+<p>→ <a href="https://rkrtl.com/verify.html" target="_blank">Verify your ${product.title} certificate at RKRTL.com</a></p>
+
+<h3>Who Is Drawn to ${product.title}</h3>
+<ul>
+[5–7 bullet points: seeker profiles using experience language — "Those seeking…", "Practitioners who…", "Individuals drawn to…"]
+</ul>
+
+<h3>How to Wear and Energise Your ${product.title}</h3>
+[Recommended day to begin wearing, thread/metal options, associated mantra, energisation ritual steps — practical guidance, 1–2 paragraphs]
+
+<h3>Frequently Asked Questions About ${product.title}</h3>
+<dl>
+[Minimum 5 FAQs covering: price/value, authenticity/certification, Nepal vs Java origin, wearing rules, who can wear — use <dt> for question, <dd> for answer]
+</dl>
+
+COMPETITOR CONTEXT (use gaps, do not copy): ${compSummary}
+CONTENT GAPS TO FILL: ${gapSummary}
+CURRENT DESCRIPTION TO IMPROVE UPON: ${descPlain}
+
+CRITICAL: This is a Rudraksha bead product ONLY. Ignore all competitor content about silver pendants, jewellery dimensions, malas, chains, or any non-bead items. Output ONLY clean HTML starting with <h2>.`,
       4000
     ),
     callClaude(`SEO specialist. Output ONLY meta title. No quotes.`,`Meta title for "${product.title}" on RudraKailash.com. Max 60 chars. Keyword + brand.`),
