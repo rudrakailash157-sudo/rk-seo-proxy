@@ -243,8 +243,9 @@ async function runCompetitorResearch(productTitle) {
         }
       }
     }
+    // ── CHANGE: fetch top 10 competitors (was 5) ──────────────────────────────
     const competitors = [];
-    for (const result of allResults.slice(0, 5)) {
+    for (const result of allResults.slice(0, 10)) {
       const text = await fetchPageText(result.url);
       competitors.push({ ...result, content: text || result.snippet, fetched: !!text });
     }
@@ -514,9 +515,13 @@ async function runSEOPipeline(product) {
     } catch (e) { console.warn("Gap analysis failed:", e.message); }
   }
 
+  // ── CHANGE: description max_tokens raised to 4000 to prevent truncation ────
   const [description, metaTitle, metaDesc, tags] = await Promise.allSettled([
-    callClaude(`Senior content strategist for RudraKailash.com. E-E-A-T (Feb 2026). NEVER direct benefit claims. Use "Seekers often describe…", "In Vedic tradition…". Output clean HTML only.`,
-      `Full SEO description for "${product.title}". ${compSummary}. ${gapSummary}. Current: "${descPlain}". IMPORTANT: This is a Rudraksha bead product only — ignore any competitor content about silver pendants, jewellery specs, malas, or non-Rudraksha items. Focus strictly on the bead: mukhi count, Vedic significance, origin (Nepal or Java), RKRTL certification. Structure: <h2> seeker opening, <h3>Spiritual Significance & Vedic Context</h3>, <h3>What Seekers Experience</h3>, <h3>RKRTL Certification — X-Ray Verified</h3> (mention independent 3rd party lab, X-ray + microscope, E. Ganitrus genus confirmed, include: <a href="https://rkrtl.com/verify.html" target="_blank">Verify authenticity at RKRTL.com →</a>), <h3>Who Is Drawn to This Bead</h3> <ul>, <h3>How to Wear & Energise</h3>, <h3>FAQ</h3>. ONLY clean HTML.`),
+    callClaude(
+      `Senior content strategist for RudraKailash.com. E-E-A-T (Feb 2026). NEVER direct benefit claims. Use "Seekers often describe…", "In Vedic tradition…". Output clean HTML only.`,
+      `Full SEO description for "${product.title}". ${compSummary}. ${gapSummary}. Current: "${descPlain}". IMPORTANT: This is a Rudraksha bead product only — ignore any competitor content about silver pendants, jewellery specs, malas, or non-Rudraksha items. Focus strictly on the bead: mukhi count, Vedic significance, origin (Nepal or Java), RKRTL certification. Structure: <h2> seeker opening, <h3>Spiritual Significance & Vedic Context</h3>, <h3>What Seekers Experience</h3>, <h3>RKRTL Certification — X-Ray Verified</h3> (mention independent 3rd party lab, X-ray + microscope, E. Ganitrus genus confirmed, include: <a href="https://rkrtl.com/verify.html" target="_blank">Verify authenticity at RKRTL.com →</a>), <h3>Who Is Drawn to This Bead</h3> <ul>, <h3>How to Wear & Energise</h3>, <h3>FAQ</h3>. ONLY clean HTML.`,
+      4000
+    ),
     callClaude(`SEO specialist. Output ONLY meta title. No quotes.`,`Meta title for "${product.title}" on RudraKailash.com. Max 60 chars. Keyword + brand.`),
     callClaude(`SEO specialist. Output ONLY meta description. No quotes.`,`Meta desc for "${product.title}". 145-155 chars. RKRTL certified + CTA.`),
     callClaude(`Shopify SEO expert. Output ONLY comma-separated tags.`,`10-12 tags for "${product.title}". Current: "${product.tags||"none"}". Include mukhi variants, RKRTL, certified authentic.`),
@@ -577,6 +582,18 @@ function buildApprovalEmail(results, triggerType) {
     </tr>`;
   }).join("");
 
+  // ── Bulk Approve All token ────────────────────────────────────────────────────
+  const bulkToken = generateApprovalToken();
+  pendingApprovals.set("bulk_" + bulkToken, {
+    isBulk: true,
+    productTokens: results.map(r => {
+      // Find the token we just stored for this product
+      const token = [...pendingApprovals.entries()].find(([k, v]) => !v.isBulk && v.productId === r.productId && v.productTitle === r.productTitle)?.[0];
+      return token;
+    }).filter(Boolean),
+    createdAt: new Date(),
+  });
+
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"/></head>
 <body style="margin:0;padding:0;background:#0D0500;font-family:Georgia,serif">
 <div style="max-width:680px;margin:0 auto;padding:32px 20px">
@@ -593,8 +610,18 @@ function buildApprovalEmail(results, triggerType) {
       <td style="text-align:center"><div style="color:#9A7050;font-size:11px;letter-spacing:1px">IMPROVEMENT</div><div style="color:#F0C84A;font-size:28px;font-weight:bold">+${avgAfter-avgBefore}</div></td>
     </tr></table>
   </div>
+
+  <!-- ── Bulk Approve All button ── -->
+  <div style="text-align:center;margin-bottom:20px">
+    <a href="${APP_URL}/approve-all/${bulkToken}"
+       style="display:inline-block;background:#D4A017;color:#0D0500;padding:14px 36px;border-radius:8px;text-decoration:none;font-size:15px;font-weight:bold;letter-spacing:0.5px">
+      🔱 Bulk Approve All ${totalProducts} Products
+    </a>
+    <p style="color:#5A3020;font-size:11px;margin-top:8px">Pushes all AI suggestions live in one click · Cannot be undone</p>
+  </div>
+
   <div style="background:#1A0A00;border:1px solid #5A2A00;border-radius:8px;padding:14px 18px;margin-bottom:20px">
-    <p style="color:#F0C060;font-size:13px;margin:0">✦ Click <strong>Approve & Push</strong> to publish live. Links expire in 7 days.</p>
+    <p style="color:#F0C060;font-size:13px;margin:0">✦ Or click <strong>Approve & Push</strong> per product below. Links expire in 7 days.</p>
   </div>
   <table style="width:100%;border-collapse:collapse;background:#120600;border:1px solid #2E1500;border-radius:10px;overflow:hidden">
     <thead><tr style="background:#160800">
@@ -611,6 +638,58 @@ function buildApprovalEmail(results, triggerType) {
   </div>
 </div></body></html>`;
 }
+
+// ─── Bulk Approve All endpoint ────────────────────────────────────────────────
+app.get("/approve-all/:token", async (req, res) => {
+  const bulkKey  = "bulk_" + req.params.token;
+  const bulk     = pendingApprovals.get(bulkKey);
+  if (!bulk || !bulk.isBulk) {
+    return res.send(`<html><body style="font-family:sans-serif;background:#0D0500;color:#F5E6C8;display:flex;align-items:center;justify-content:center;height:100vh">
+      <div style="text-align:center;padding:40px;border:1px solid #7B1C1C;border-radius:12px;background:#1A0A00;">
+        <div style="font-size:48px">❌</div><h2 style="color:#F08080;margin:16px 0">Link Expired</h2>
+        <p style="color:#9A7050">This bulk approval link has expired or was already used.</p>
+      </div></body></html>`);
+  }
+
+  const tokens  = bulk.productTokens;
+  let pushed    = 0, failed = 0;
+  const details = [];
+
+  for (const token of tokens) {
+    const approval = pendingApprovals.get(token);
+    if (!approval) { failed++; continue; }
+    try {
+      const shopifyRes = await fetch(
+        `https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${approval.productId}.json`,
+        { method: "PUT", headers: { "X-Shopify-Access-Token": storedAccessToken, "Content-Type": "application/json" },
+          body: JSON.stringify({ product: { id: approval.productId, ...approval.payload } }) }
+      );
+      if (shopifyRes.ok) {
+        pushed++;
+        details.push(`<li style="color:#7FD48A;padding:4px 0">✅ ${approval.productTitle} — SEO: ${approval.scoreBefore} → ${approval.scoreAfter}</li>`);
+        pendingApprovals.delete(token);
+      } else {
+        failed++;
+        details.push(`<li style="color:#F08080;padding:4px 0">❌ ${approval.productTitle} — Push failed</li>`);
+      }
+    } catch (e) {
+      failed++;
+      details.push(`<li style="color:#F08080;padding:4px 0">❌ ${approval.productTitle} — ${e.message}</li>`);
+    }
+    await new Promise(r => setTimeout(r, 500)); // gentle rate limit between pushes
+  }
+
+  pendingApprovals.delete(bulkKey);
+
+  res.send(`<html><body style="font-family:sans-serif;background:#0D0500;color:#F5E6C8;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px;box-sizing:border-box">
+    <div style="text-align:center;padding:40px;border:1px solid #D4A017;border-radius:12px;background:#1A0A00;max-width:560px;width:100%">
+      <div style="font-size:48px">🔱</div>
+      <h2 style="color:#F0C84A;margin:16px 0">Bulk Push Complete</h2>
+      <p style="color:#9A7050;margin-bottom:20px">${pushed} pushed successfully · ${failed} failed</p>
+      <ul style="list-style:none;padding:0;margin:0 0 20px;text-align:left;font-size:13px;max-height:400px;overflow-y:auto">${details.join("")}</ul>
+      <p style="color:#5A3020;font-size:12px">All changes are now live on RudraKailash.com</p>
+    </div></body></html>`);
+});
 
 // ─── Weekly SEO cron: Sunday 11pm IST = 17:30 UTC ────────────────────────────
 cron.schedule("30 17 * * 0", async () => {
