@@ -548,8 +548,7 @@ STRUCTURE:
 <ul>[4–5 bullets: "Seekers report…" / "Those who wear it describe…" — NO direct claims]</ul>
 
 <h3>RKRTL Certification — Verified Authentic ${product.title}</h3>
-[2–3 lines: X-ray + microscope, Elaeocarpus ganitrus confirmed, RKRTL independent of RudraKailash.com]
-<p><a href="https://rkrtl.com/verify.html" target="_blank">Verify your certificate at RKRTL.com →</a></p>
+[2–3 lines: X-ray imaging + high-magnification microscopy process, Elaeocarpus ganitrus species confirmed, certificate issued with unique ID — do NOT mention RKRTL independence from RudraKailash.com, do NOT include any verify/certificate links]
 
 <h3>Who Should Buy ${product.title} — Ideal Seekers</h3>
 <ul>[4–5 bullets: seeker profiles — "Those seeking…", "Practitioners who…"]</ul>
@@ -558,7 +557,7 @@ STRUCTURE:
 <ul>[4–5 bullets: day to begin, thread/metal, mantra, energisation steps]</ul>
 
 <h3>Frequently Asked Questions About ${product.title}</h3>
-<dl>[4 FAQs: (1) authenticity, (2) origin/form, (3) who can wear, (4) price/value]</dl>
+<dl>[4 FAQs numbered 1–4, questions in <dt><strong>1. Question text</strong></dt> format, answers in <dd>: (1) authenticity/certification process, (2) origin/form of the bead, (3) who can wear it, (4) general value/quality — do NOT mention any specific size in mm or price ranges in rupees]</dl>
 
 GAPS TO ADDRESS: ${gapSummary}
 CURRENT DESCRIPTION: ${descPlain}
