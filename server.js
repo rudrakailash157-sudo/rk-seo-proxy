@@ -100,25 +100,28 @@ async function sendEmail(subject, htmlBody) {
 
 // ─── Health check ─────────────────────────────────────────────────────────────
 app.get("/", (req, res) => {
-  const rankData   = loadRankData();
-  const keywords   = loadKeywords();
+  const rankData     = loadRankData();
+  const keywords     = loadKeywords();
   const trackedCount = Object.keys(keywords).length;
   res.json({
     status: "ok", service: "RudraKailash SEO Proxy", store: SHOPIFY_STORE_DOMAIN,
-    tokenConfigured: !!storedAccessToken,
+    tokenConfigured:        !!storedAccessToken,
     anthropicKeyConfigured: !!process.env.ANTHROPIC_API_KEY,
-    serperConfigured: !!process.env.SERPER_API_KEY,
-    emailConfigured: !!(process.env.EMAIL_SMTP_USER && process.env.EMAIL_SMTP_PASS),
-    rankTracking: { trackedProducts: trackedCount, dataPoints: Object.values(rankData).reduce((s, p) => s + (p.history?.length || 0), 0) },
+    serperConfigured:       !!process.env.SERPER_API_KEY,
+    emailConfigured:        !!(process.env.EMAIL_SMTP_USER && process.env.EMAIL_SMTP_PASS),
+    rankTracking: {
+      trackedProducts: trackedCount,
+      dataPoints: Object.values(rankData).reduce((s, p) => s + (p.history?.length || 0), 0),
+    },
     pendingApprovals: pendingApprovals.size,
   });
 });
 
 // ─── OAuth ────────────────────────────────────────────────────────────────────
 app.get("/auth/install", (req, res) => {
-  const scopes = "read_products,write_products,read_product_listings";
+  const scopes      = "read_products,write_products,read_product_listings";
   const redirectUri = `${APP_URL}/auth/callback`;
-  const state = Math.random().toString(36).substring(7);
+  const state       = Math.random().toString(36).substring(7);
   res.redirect(`https://${SHOPIFY_STORE_DOMAIN}/admin/oauth/authorize?client_id=${SHOPIFY_CLIENT_ID}&scope=${scopes}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`);
 });
 
@@ -146,8 +149,10 @@ app.get("/auth/callback", async (req, res) => {
 });
 
 app.get("/auth/status", (req, res) => {
-  res.json({ connected: !!storedAccessToken, store: SHOPIFY_STORE_DOMAIN,
-    tokenSource: fs.existsSync(TOKEN_FILE) ? "disk" : (process.env.SHOPIFY_ACCESS_TOKEN ? "env" : "memory") });
+  res.json({
+    connected: !!storedAccessToken, store: SHOPIFY_STORE_DOMAIN,
+    tokenSource: fs.existsSync(TOKEN_FILE) ? "disk" : (process.env.SHOPIFY_ACCESS_TOKEN ? "env" : "memory"),
+  });
 });
 
 app.get("/auth/token", (req, res) => {
@@ -176,8 +181,11 @@ app.put("/products/:id", async (req, res) => {
   try {
     const shopifyRes = await fetch(
       `https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${id}.json`,
-      { method: "PUT", headers: { "X-Shopify-Access-Token": storedAccessToken, "Content-Type": "application/json" },
-        body: JSON.stringify({ product: { id, ...req.body } }) }
+      {
+        method: "PUT",
+        headers: { "X-Shopify-Access-Token": storedAccessToken, "Content-Type": "application/json" },
+        body: JSON.stringify({ product: { id, ...req.body } }),
+      }
     );
     const data = await shopifyRes.json();
     if (!shopifyRes.ok) return res.status(shopifyRes.status).json({ error: "Update failed", details: data });
@@ -193,8 +201,17 @@ app.post("/ai/generate", async (req, res) => {
     const { system, user, max_tokens = 1200 } = req.body;
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_KEY.trim(), "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens, system, messages: [{ role: "user", content: user }] }),
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": ANTHROPIC_KEY.trim(),
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens,
+        system,
+        messages: [{ role: "user", content: user }],
+      }),
     });
     const data = await response.json();
     if (!response.ok) return res.status(response.status).json({ error: "Anthropic error", details: data });
@@ -203,51 +220,103 @@ app.post("/ai/generate", async (req, res) => {
 });
 
 // ─── Competitor research ──────────────────────────────────────────────────────
-const MARKETPLACE_DOMAINS = ["amazon.","flipkart.","snapdeal.","meesho.","myntra.","indiamart.","alibaba.","ebay.","etsy.","walmart.","paytmmall.","shopclues.","tatacliq.","ajio.","nykaa.","jiomart."];
+const MARKETPLACE_DOMAINS = [
+  "amazon.","flipkart.","snapdeal.","meesho.","myntra.","indiamart.",
+  "alibaba.","ebay.","etsy.","walmart.","paytmmall.","shopclues.",
+  "tatacliq.","ajio.","nykaa.","jiomart.",
+];
 
-function isMarketplace(url) { return MARKETPLACE_DOMAINS.some(d => url.toLowerCase().includes(d)); }
-
-function extractTextFromHTML(html) {
-  return html.replace(/<script[\s\S]*?<\/script>/gi,"").replace(/<style[\s\S]*?<\/style>/gi,"")
-    .replace(/<nav[\s\S]*?<\/nav>/gi,"").replace(/<footer[\s\S]*?<\/footer>/gi,"")
-    .replace(/<header[\s\S]*?<\/header>/gi,"").replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim().slice(0,3000);
+function isMarketplace(url) {
+  return MARKETPLACE_DOMAINS.some(d => url.toLowerCase().includes(d));
 }
 
+// ── v8 UPDATE: extractTextFromHTML now returns structured { text, headings } ──
+function extractTextFromHTML(html) {
+  // Extract H1 headings — primary keyword signals
+  const h1Matches = [...html.matchAll(/<h1[^>]*>([\s\S]*?)<\/h1>/gi)];
+  const h1s = h1Matches
+    .map(m => m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .slice(0, 5);
+
+  // Extract H2 + H3 headings — sub-topic and LSI keyword signals
+  const h2h3Matches = [...html.matchAll(/<h[23][^>]*>([\s\S]*?)<\/h[23]>/gi)];
+  const h2h3s = h2h3Matches
+    .map(m => m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .slice(0, 12);
+
+  // Clean body text
+  const bodyText = html
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<nav[\s\S]*?<\/nav>/gi, "")
+    .replace(/<footer[\s\S]*?<\/footer>/gi, "")
+    .replace(/<header[\s\S]*?<\/header>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 3000);
+
+  return { text: bodyText, headings: { h1: h1s, h2h3: h2h3s } };
+}
+
+// ── v8 UPDATE: fetchPageText now returns structured { text, headings } or null
 async function fetchPageText(url) {
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-    const res = await fetch(url, { signal: controller.signal, headers: { "User-Agent": "Mozilla/5.0 (compatible; RudraKailashSEOBot/1.0)", "Accept": "text/html" } });
+    const timeout    = setTimeout(() => controller.abort(), 8000);
+    const res        = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; RudraKailashSEOBot/1.0)",
+        "Accept": "text/html",
+      },
+    });
     clearTimeout(timeout);
     if (!res.ok) return null;
     return extractTextFromHTML(await res.text());
   } catch (e) { return null; }
 }
 
+// ── v8 UPDATE: runCompetitorResearch now returns headings alongside content ───
 async function runCompetitorResearch(productTitle) {
   const SERPER_KEY = process.env.SERPER_API_KEY;
   if (!SERPER_KEY) return [];
   try {
-    const queries = [`${productTitle} buy online authentic certified`, `${productTitle} spiritual benefits Vedic`];
-    const seenUrls = new Set(), allResults = [];
+    const queries   = [
+      `${productTitle} buy online authentic certified`,
+      `${productTitle} spiritual benefits Vedic`,
+    ];
+    const seenUrls  = new Set();
+    const allResults = [];
+
     for (const query of queries) {
       const serperRes  = await fetch("https://google.serper.dev/search", {
-        method: "POST", headers: { "X-API-KEY": SERPER_KEY, "Content-Type": "application/json" },
+        method: "POST",
+        headers: { "X-API-KEY": SERPER_KEY, "Content-Type": "application/json" },
         body: JSON.stringify({ q: query, gl: "in", hl: "en", num: 10 }),
       });
       const serperData = await serperRes.json();
       for (const result of (serperData.organic || [])) {
         const url = result.link || "";
         if (url && !isMarketplace(url) && !url.includes("rudrakailash.com") && !seenUrls.has(url)) {
-          seenUrls.add(url); allResults.push({ url, title: result.title || "", snippet: result.snippet || "" });
+          seenUrls.add(url);
+          allResults.push({ url, title: result.title || "", snippet: result.snippet || "" });
         }
       }
     }
-    // ── CHANGE: fetch top 10 competitors (was 5) ──────────────────────────────
+
+    // Fetch top 10 competitors, extracting headings + body text
     const competitors = [];
     for (const result of allResults.slice(0, 10)) {
-      const text = await fetchPageText(result.url);
-      competitors.push({ ...result, content: text || result.snippet, fetched: !!text });
+      const extracted = await fetchPageText(result.url);
+      competitors.push({
+        ...result,
+        content:  extracted ? extracted.text              : result.snippet,
+        headings: extracted ? extracted.headings          : { h1: [], h2h3: [] },
+        fetched:  !!extracted,
+      });
     }
     return competitors;
   } catch (e) { return []; }
@@ -263,13 +332,10 @@ app.post("/competitor/research", async (req, res) => {
 });
 
 // ─── RANK TRACKING ────────────────────────────────────────────────────────────
-
-// Auto-generate keyword from product title
 function autoKeyword(productTitle) {
   return `${productTitle} buy online`;
 }
 
-// Check position of rudrakailash.com for a keyword on a given Google TLD
 async function checkRankPosition(keyword, gl = "in") {
   const SERPER_KEY = process.env.SERPER_API_KEY;
   if (!SERPER_KEY) return null;
@@ -282,21 +348,16 @@ async function checkRankPosition(keyword, gl = "in") {
     const serperData = await serperRes.json();
     const organic    = serperData.organic || [];
     for (let i = 0; i < organic.length; i++) {
-      if ((organic[i].link || "").includes(STORE_DOMAIN_SHORT)) {
-        return i + 1; // 1-based position
-      }
+      if ((organic[i].link || "").includes(STORE_DOMAIN_SHORT)) return i + 1;
     }
-    return null; // Not in top 100
+    return null;
   } catch (e) { console.warn(`Rank check failed for "${keyword}" (${gl}):`, e.message); return null; }
 }
 
-// GET /rank/keywords — list all tracked keywords
 app.get("/rank/keywords", (req, res) => {
-  const keywords = loadKeywords();
-  res.json({ success: true, keywords });
+  res.json({ success: true, keywords: loadKeywords() });
 });
 
-// POST /rank/keywords — set/override keyword for a product
 app.post("/rank/keywords", (req, res) => {
   const { productId, productTitle, keyword } = req.body;
   if (!productId || !productTitle) return res.status(400).json({ error: "productId and productTitle required" });
@@ -304,15 +365,14 @@ app.post("/rank/keywords", (req, res) => {
   keywords[productId] = {
     productId,
     productTitle,
-    keyword:      keyword || autoKeyword(productTitle),
-    isCustom:     !!keyword,
-    addedAt:      new Date().toISOString(),
+    keyword:  keyword || autoKeyword(productTitle),
+    isCustom: !!keyword,
+    addedAt:  new Date().toISOString(),
   };
   saveKeywords(keywords);
   res.json({ success: true, entry: keywords[productId] });
 });
 
-// DELETE /rank/keywords/:productId — remove from tracking
 app.delete("/rank/keywords/:productId", (req, res) => {
   const keywords = loadKeywords();
   delete keywords[req.params.productId];
@@ -320,28 +380,18 @@ app.delete("/rank/keywords/:productId", (req, res) => {
   res.json({ success: true });
 });
 
-// GET /rank/data — all rank history
 app.get("/rank/data", (req, res) => {
-  const rankData = loadRankData();
-  const keywords = loadKeywords();
-  res.json({ success: true, rankData, keywords });
+  res.json({ success: true, rankData: loadRankData(), keywords: loadKeywords() });
 });
 
-// POST /rank/check/:productId — manual check for one product
 app.post("/rank/check/:productId", async (req, res) => {
-  const keywords  = loadKeywords();
-  const entry     = keywords[req.params.productId];
+  const keywords = loadKeywords();
+  const entry    = keywords[req.params.productId];
   if (!entry) return res.status(404).json({ error: "Product not tracked. Add keyword first." });
-
   res.json({ message: "Rank check started — results in ~30 seconds.", keyword: entry.keyword });
-
-  // Run async
-  setTimeout(async () => {
-    await checkAndStoreRank(entry);
-  }, 100);
+  setTimeout(async () => { await checkAndStoreRank(entry); }, 100);
 });
 
-// Core rank check + store function
 async function checkAndStoreRank(entry) {
   const { productId, productTitle, keyword } = entry;
   console.log(`📊 Checking rank: "${keyword}"`);
@@ -358,24 +408,15 @@ async function checkAndStoreRank(entry) {
     rankData[productId] = { productId, productTitle, keyword, history: [] };
   }
 
-  // Remove today's entry if it exists (overwrite)
   rankData[productId].history = rankData[productId].history.filter(h => h.date !== today);
-
-  rankData[productId].history.push({
-    date:      today,
-    posIN:     posIN,
-    posGlobal: posGlobal,
-    checkedAt: new Date().toISOString(),
-  });
-
-  // Keep last 90 days only
+  rankData[productId].history.push({ date: today, posIN, posGlobal, checkedAt: new Date().toISOString() });
   rankData[productId].history = rankData[productId].history
     .sort((a, b) => a.date.localeCompare(b.date))
     .slice(-90);
 
-  rankData[productId].lastChecked = new Date().toISOString();
-  rankData[productId].latestIN    = posIN;
-  rankData[productId].latestGlobal = posGlobal;
+  rankData[productId].lastChecked   = new Date().toISOString();
+  rankData[productId].latestIN      = posIN;
+  rankData[productId].latestGlobal  = posGlobal;
 
   saveRankData(rankData);
   console.log(`✅ Rank stored: "${keyword}" — IN: ${posIN || "Not found"}, Global: ${posGlobal || "Not found"}`);
@@ -391,7 +432,7 @@ cron.schedule("30 0 * * *", async () => {
   console.log(`📊 Checking ${entries.length} products…`);
   for (const entry of entries) {
     await checkAndStoreRank(entry);
-    await new Promise(r => setTimeout(r, 2000)); // Rate limit
+    await new Promise(r => setTimeout(r, 2000));
   }
   console.log("📊 Daily rank check complete.");
 }, { timezone: "UTC" });
@@ -404,21 +445,17 @@ cron.schedule("30 1 * * 1", async () => {
   if (entries.length === 0) return;
 
   const rows = entries.map(entry => {
-    const history = entry.history || [];
-    const latest  = history[history.length - 1];
-    const prev    = history[history.length - 8]; // ~7 days ago
-
+    const history   = entry.history || [];
+    const latest    = history[history.length - 1];
+    const prev      = history[history.length - 8];
     const posIN     = latest?.posIN     || null;
     const posGlobal = latest?.posGlobal || null;
     const prevIN    = prev?.posIN       || null;
-
-    const deltaIN = prevIN && posIN ? prevIN - posIN : null; // positive = improved
-    const trend   = deltaIN === null ? "—" : deltaIN > 0 ? `▲ ${deltaIN}` : deltaIN < 0 ? `▼ ${Math.abs(deltaIN)}` : "→ same";
-
+    const deltaIN   = prevIN && posIN ? prevIN - posIN : null;
+    const trend     = deltaIN === null ? "—" : deltaIN > 0 ? `▲ ${deltaIN}` : deltaIN < 0 ? `▼ ${Math.abs(deltaIN)}` : "→ same";
     return { title: entry.productTitle, keyword: entry.keyword, posIN, posGlobal, trend, deltaIN };
   });
 
-  // Sort: biggest improvements first
   rows.sort((a, b) => (b.deltaIN || 0) - (a.deltaIN || 0));
 
   const tableRows = rows.map(r => `
@@ -469,17 +506,26 @@ cron.schedule("30 1 * * 1", async () => {
   console.log("📊 Weekly rank report sent.");
 }, { timezone: "UTC" });
 
-// ─── SEO Pipeline ─────────────────────────────────────────────────────────────
+// ─── SEO Pipeline (server-side cron / webhook) ────────────────────────────────
 function cleanAIOutput(text) {
-  return text.replace(/^```(?:html)?\s*/i,"").replace(/\s*```\s*$/,"").trim();
+  return text.replace(/^```(?:html)?\s*/i, "").replace(/\s*```\s*$/,"").trim();
 }
 
 async function callClaude(system, user, max_tokens = 1200) {
   const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_KEY.trim(), "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens, system, messages: [{ role: "user", content: user }] }),
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": ANTHROPIC_KEY.trim(),
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens,
+      system,
+      messages: [{ role: "user", content: user }],
+    }),
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error?.message || "Anthropic error");
@@ -490,32 +536,83 @@ function scoreSEO(metaTitle, metaDesc, tags, desc) {
   const titleLen = (metaTitle||"").length, descLen = (metaDesc||"").length;
   const tagCount = (tags||"").split(",").filter(Boolean).length;
   const descText = (desc||"").replace(/<[^>]+>/g,"");
-  const checks = [titleLen>0,titleLen>=40&&titleLen<=60,/(rudrakailash)/i.test(metaTitle||""),
-    descLen>0,descLen>=130&&descLen<=155,/shop|buy|order|get|explore/i.test(metaDesc||""),
-    tagCount>0,tagCount>=6,/rkrtl|certified|authentic/i.test(tags||""),
-    descText.length>100,descText.split(/\s+/).length>=300,/<h[23]/i.test(desc||""),
-    /rkrtl|certified|x-ray/i.test(descText)];
+  const checks = [
+    titleLen>0, titleLen>=40&&titleLen<=60, /(rudrakailash)/i.test(metaTitle||""),
+    descLen>0, descLen>=130&&descLen<=155, /shop|buy|order|get|explore/i.test(metaDesc||""),
+    tagCount>0, tagCount>=6, /rkrtl|certified|authentic/i.test(tags||""),
+    descText.length>100, descText.split(/\s+/).length>=300, /<h[23]/i.test(desc||""),
+    /rkrtl|certified|x-ray/i.test(descText),
+  ];
   const pts = [10,10,5,10,10,5,5,8,7,10,10,5,5];
-  return Math.round(checks.reduce((s,c,i)=>s+(c?pts[i]:0),0)/pts.reduce((s,p)=>s+p,0)*100);
+  return Math.round(checks.reduce((s,c,i) => s+(c?pts[i]:0), 0) / pts.reduce((s,p) => s+p, 0) * 100);
 }
 
+// ── v8 UPDATE: runSEOPipeline now includes keyword extraction for cron/webhook
 async function runSEOPipeline(product) {
   console.log(`🤖 SEO pipeline: ${product.title}`);
   const descPlain   = (product.body_html||"").replace(/<[^>]+>/g,"").slice(0,400);
   const competitors = await runCompetitorResearch(product.title);
-  const compSummary = competitors.length>0 ? `Top ${competitors.length} competitors: ${competitors.map(c=>c.title).join(", ")}` : "No competitor data.";
+  const compSummary = competitors.length > 0
+    ? `Top ${competitors.length} competitors: ${competitors.map(c=>c.title).join(", ")}`
+    : "No competitor data.";
 
-  let gapSummary = "Cover all key topics comprehensively.";
-  if (competitors.length>0) {
+  // Keyword extraction from competitor H1/H2/H3 + body
+  let keywordBrief = "";
+  if (competitors.length > 0) {
     try {
-      const compTexts = competitors.map((c,i)=>`Competitor ${i+1} (${c.url}):\n${(c.content||c.snippet).slice(0,500)}`).join("\n\n---\n\n");
-      const gapRaw = await callClaude(`SEO strategist. Output ONLY JSON array of gap strings.`,`Product: "${product.title}". Our: "${descPlain}". Competitors:\n${compTexts}\nIdentify 5-8 gaps. Output ONLY JSON array.`,600);
-      try { const gaps = JSON.parse(gapRaw.replace(/^```json\s*/i,"").replace(/\s*```$/,"").trim()); gapSummary = `Fill: ${gaps.join("; ")}`; }
-      catch (e) { gapSummary = gapRaw.slice(0,300); }
-    } catch (e) { console.warn("Gap analysis failed:", e.message); }
+      const compHeadingInput = competitors.map((c, i) => {
+        const headings = c.headings || {};
+        const h1s   = (headings.h1   || []).slice(0, 3).join(" | ");
+        const h2h3s = (headings.h2h3 || []).slice(0, 6).join(" | ");
+        const text  = (c.content || c.snippet || "").slice(0, 400);
+        return `Competitor ${i+1} (${c.url}):\nH1: ${h1s || "none"}\nH2/H3: ${h2h3s || "none"}\nBody: ${text}`;
+      }).join("\n\n---\n\n");
+
+      const kwRaw = await callClaude(
+        `You are an SEO keyword analyst. Output ONLY valid JSON. No markdown. No explanation.`,
+        `Extract SEO keywords from these ${competitors.length} competitor pages for "${product.title}" on RudraKailash.com.
+
+${compHeadingInput}
+
+Extract:
+1. h1Keywords: Primary keywords from competitor H1 tags (max 8, exact phrases)
+2. h2h3Keywords: Sub-topic LSI keywords from H2/H3 headings (max 12, exact phrases)
+3. intentPhrases: Recurring long-tail intent phrases from body text across 2+ competitors (max 10)
+
+Output ONLY:
+{"h1":["phrase1"],"h2h3":["phrase1"],"phrases":["phrase1"]}`, 800
+      );
+
+      try {
+        const kw = JSON.parse(kwRaw.replace(/^```json\s*/i,"").replace(/\s*```$/,"").trim());
+        keywordBrief = [
+          kw.h1?.length      ? `PRIMARY (H1): ${kw.h1.join(", ")}`          : "",
+          kw.h2h3?.length    ? `SUB-TOPICS (H2/H3): ${kw.h2h3.join(", ")}` : "",
+          kw.phrases?.length ? `LONG-TAIL INTENT: ${kw.phrases.join(", ")}` : "",
+        ].filter(Boolean).join("\n");
+      } catch(e) { keywordBrief = ""; }
+    } catch(e) { console.warn("Keyword extraction failed:", e.message); }
   }
 
-  // ── CHANGE: description max_tokens raised to 4000 to prevent truncation ────
+  // Gap analysis — informed by extracted keywords
+  let gapSummary = "Cover all key topics comprehensively.";
+  if (competitors.length > 0) {
+    try {
+      const compTexts = competitors.map((c,i) =>
+        `Competitor ${i+1} (${c.url}):\n${(c.content||c.snippet).slice(0,500)}`
+      ).join("\n\n---\n\n");
+      const gapRaw = await callClaude(
+        `SEO strategist. Output ONLY JSON array of gap strings.`,
+        `Product: "${product.title}". Our: "${descPlain}". Competitors:\n${compTexts}\nKeywords competitors rank for: ${keywordBrief}\nIdentify 5-8 gaps. Output ONLY JSON array.`,
+        700
+      );
+      try {
+        const gaps = JSON.parse(gapRaw.replace(/^```json\s*/i,"").replace(/\s*```$/,"").trim());
+        gapSummary = `Fill: ${gaps.join("; ")}`;
+      } catch(e) { gapSummary = gapRaw.slice(0,300); }
+    } catch(e) { console.warn("Gap analysis failed:", e.message); }
+  }
+
   const isHalfMoon = /half.?moon|1\s*mukhi/i.test(product.title);
   const [description, metaTitle, metaDesc, tags] = await Promise.allSettled([
     callClaude(
@@ -559,28 +656,37 @@ STRUCTURE:
 <h3>Frequently Asked Questions About ${product.title}</h3>
 <dl>[4 FAQs numbered 1–4, questions in <dt><strong>1. Question text</strong></dt> format, answers in <dd>: (1) authenticity/certification process, (2) origin/form of the bead, (3) who can wear it, (4) general value/quality — do NOT mention any specific size in mm or price ranges in rupees]</dl>
 
+COMPETITOR KEYWORD TARGETS:
+${keywordBrief || "Use standard Rudraksha SEO keywords."}
+
 GAPS TO ADDRESS: ${gapSummary}
 CURRENT DESCRIPTION: ${descPlain}
 
 OUTPUT: Clean HTML only, starting with <h2>. Rudraksha bead content only.`,
       5000
     ),
-    callClaude(`SEO specialist. Output ONLY meta title. No quotes.`,`Meta title for "${product.title}" on RudraKailash.com. Max 60 chars. Keyword + brand.`),
-    callClaude(`SEO specialist. Output ONLY meta description. No quotes.`,`Meta desc for "${product.title}". 145-155 chars. RKRTL certified + CTA.`),
-    callClaude(`Shopify SEO expert. Output ONLY comma-separated tags.`,`10-12 tags for "${product.title}". Current: "${product.tags||"none"}". Include mukhi variants, RKRTL, certified authentic.`),
+    callClaude(`SEO specialist. Output ONLY meta title. No quotes.`, `Meta title for "${product.title}" on RudraKailash.com. Max 60 chars. Keyword + brand.`),
+    callClaude(`SEO specialist. Output ONLY meta description. No quotes.`, `Meta desc for "${product.title}". 145-155 chars. RKRTL certified + CTA.`),
+    callClaude(`Shopify SEO expert. Output ONLY comma-separated tags.`, `10-12 tags for "${product.title}". Current: "${product.tags||"none"}". Include mukhi variants, RKRTL, certified authentic.`),
   ]);
 
   const result = {
-    description: description.status==="fulfilled" ? description.value : "<p>Generation failed</p>",
-    metaTitle:   metaTitle.status==="fulfilled"   ? metaTitle.value   : product.title,
-    metaDesc:    metaDesc.status==="fulfilled"     ? metaDesc.value    : "",
-    tags:        tags.status==="fulfilled"         ? tags.value        : product.tags||"",
+    description: description.status === "fulfilled" ? description.value : "<p>Generation failed</p>",
+    metaTitle:   metaTitle.status   === "fulfilled" ? metaTitle.value   : product.title,
+    metaDesc:    metaDesc.status    === "fulfilled" ? metaDesc.value    : "",
+    tags:        tags.status        === "fulfilled" ? tags.value        : product.tags || "",
   };
 
-  // Auto-register product for rank tracking after SEO push
+  // Auto-register for rank tracking
   const keywords = loadKeywords();
   if (!keywords[product.id]) {
-    keywords[product.id] = { productId: product.id, productTitle: product.title, keyword: autoKeyword(product.title), isCustom: false, addedAt: new Date().toISOString() };
+    keywords[product.id] = {
+      productId:    product.id,
+      productTitle: product.title,
+      keyword:      autoKeyword(product.title),
+      isCustom:     false,
+      addedAt:      new Date().toISOString(),
+    };
     saveKeywords(keywords);
     console.log(`📊 Auto-registered for rank tracking: ${product.title}`);
   }
@@ -596,22 +702,26 @@ app.get("/approve/:token", async (req, res) => {
   const approval = pendingApprovals.get(req.params.token);
   if (!approval) return res.send(`<html><body style="font-family:sans-serif;background:#0D0500;color:#F5E6C8;display:flex;align-items:center;justify-content:center;height:100vh"><div style="text-align:center;padding:40px;border:1px solid #7B1C1C;border-radius:12px;background:#1A0A00;"><div style="font-size:48px">❌</div><h2 style="color:#F08080;margin:16px 0">Link Expired</h2><p style="color:#9A7050">This approval link has expired or was already used.</p></div></body></html>`);
   try {
-    const shopifyRes = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${approval.productId}.json`,
-      { method:"PUT", headers:{"X-Shopify-Access-Token":storedAccessToken,"Content-Type":"application/json"}, body:JSON.stringify({product:{id:approval.productId,...approval.payload}}) });
+    const shopifyRes = await fetch(
+      `https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${approval.productId}.json`,
+      { method:"PUT", headers:{"X-Shopify-Access-Token":storedAccessToken,"Content-Type":"application/json"}, body:JSON.stringify({product:{id:approval.productId,...approval.payload}}) }
+    );
     const data = await shopifyRes.json();
     pendingApprovals.delete(req.params.token);
     if (shopifyRes.ok) {
       res.send(`<html><body style="font-family:sans-serif;background:#0D0500;color:#F5E6C8;display:flex;align-items:center;justify-content:center;height:100vh"><div style="text-align:center;padding:40px;border:1px solid #D4A017;border-radius:12px;background:#1A0A00;max-width:500px"><div style="font-size:48px">✅</div><h2 style="color:#F0C84A;margin:16px 0">Pushed!</h2><p style="color:#9A7050"><strong style="color:#F5E6C8">${approval.productTitle}</strong> is live on RudraKailash.com</p><p style="color:#9A7050;margin-top:12px;font-size:13px">SEO: ${approval.scoreBefore} → ${approval.scoreAfter} (+${approval.scoreAfter-approval.scoreBefore} pts)</p></div></body></html>`);
     } else throw new Error(JSON.stringify(data));
-  } catch (err) { res.send(`<html><body style="font-family:sans-serif;background:#0D0500;display:flex;align-items:center;justify-content:center;height:100vh"><div style="text-align:center;padding:40px;border:1px solid #7B1C1C;border-radius:12px;background:#1A0A00;"><div style="font-size:48px">❌</div><h2 style="color:#F08080">Push Failed</h2><p style="color:#9A7050">${err.message}</p></div></body></html>`); }
+  } catch (err) {
+    res.send(`<html><body style="font-family:sans-serif;background:#0D0500;display:flex;align-items:center;justify-content:center;height:100vh"><div style="text-align:center;padding:40px;border:1px solid #7B1C1C;border-radius:12px;background:#1A0A00;"><div style="font-size:48px">❌</div><h2 style="color:#F08080">Push Failed</h2><p style="color:#9A7050">${err.message}</p></div></body></html>`);
+  }
 });
 
 // ─── Email builder ────────────────────────────────────────────────────────────
 function buildApprovalEmail(results, triggerType) {
   const totalProducts = results.length;
-  const avgBefore = Math.round(results.reduce((s,r)=>s+r.scoreBefore,0)/totalProducts);
-  const avgAfter  = Math.round(results.reduce((s,r)=>s+r.scoreAfter,0)/totalProducts);
-  const triggered = triggerType==="webhook"?"New Product Added":triggerType==="manual"?"Manual Trigger":"Weekly Scheduled Run";
+  const avgBefore = Math.round(results.reduce((s,r) => s+r.scoreBefore, 0) / totalProducts);
+  const avgAfter  = Math.round(results.reduce((s,r) => s+r.scoreAfter,  0) / totalProducts);
+  const triggered = triggerType==="webhook" ? "New Product Added" : triggerType==="manual" ? "Manual Trigger" : "Weekly Scheduled Run";
 
   const productRows = results.map(r => {
     const approvalToken = generateApprovalToken();
@@ -621,18 +731,15 @@ function buildApprovalEmail(results, triggerType) {
       <td style="padding:12px 16px;text-align:center;color:#F08080;font-weight:bold">${r.scoreBefore}</td>
       <td style="padding:12px 16px;text-align:center;color:#7FD48A;font-weight:bold">${r.scoreAfter}</td>
       <td style="padding:12px 16px;text-align:center;color:#F0C84A;font-weight:bold">+${r.scoreAfter-r.scoreBefore}</td>
-      <td style="padding:12px 16px;text-align:center"><a href="${APP_URL}/approve/${approvalToken}" style="background:#D4A017;color:#0D0500;padding:6px 16px;border-radius:5px;text-decoration:none;font-size:12px;font-weight:bold">✓ Approve & Push</a></td>
+      <td style="padding:12px 16px;text-align:center"><a href="${APP_URL}/approve/${approvalToken}" style="background:#D4A017;color:#0D0500;padding:6px 16px;border-radius:5px;text-decoration:none;font-size:12px;font-weight:bold">✓ Approve &amp; Push</a></td>
     </tr>`;
   }).join("");
 
-  // ── Bulk Approve All token ────────────────────────────────────────────────────
   const bulkToken = generateApprovalToken();
   pendingApprovals.set("bulk_" + bulkToken, {
     isBulk: true,
     productTokens: results.map(r => {
-      // Find the token we just stored for this product
-      const token = [...pendingApprovals.entries()].find(([k, v]) => !v.isBulk && v.productId === r.productId && v.productTitle === r.productTitle)?.[0];
-      return token;
+      return [...pendingApprovals.entries()].find(([k, v]) => !v.isBulk && v.productId === r.productId && v.productTitle === r.productTitle)?.[0];
     }).filter(Boolean),
     createdAt: new Date(),
   });
@@ -653,18 +760,14 @@ function buildApprovalEmail(results, triggerType) {
       <td style="text-align:center"><div style="color:#9A7050;font-size:11px;letter-spacing:1px">IMPROVEMENT</div><div style="color:#F0C84A;font-size:28px;font-weight:bold">+${avgAfter-avgBefore}</div></td>
     </tr></table>
   </div>
-
-  <!-- ── Bulk Approve All button ── -->
   <div style="text-align:center;margin-bottom:20px">
-    <a href="${APP_URL}/approve-all/${bulkToken}"
-       style="display:inline-block;background:#D4A017;color:#0D0500;padding:14px 36px;border-radius:8px;text-decoration:none;font-size:15px;font-weight:bold;letter-spacing:0.5px">
+    <a href="${APP_URL}/approve-all/${bulkToken}" style="display:inline-block;background:#D4A017;color:#0D0500;padding:14px 36px;border-radius:8px;text-decoration:none;font-size:15px;font-weight:bold;letter-spacing:0.5px">
       🔱 Bulk Approve All ${totalProducts} Products
     </a>
     <p style="color:#5A3020;font-size:11px;margin-top:8px">Pushes all AI suggestions live in one click · Cannot be undone</p>
   </div>
-
   <div style="background:#1A0A00;border:1px solid #5A2A00;border-radius:8px;padding:14px 18px;margin-bottom:20px">
-    <p style="color:#F0C060;font-size:13px;margin:0">✦ Or click <strong>Approve & Push</strong> per product below. Links expire in 7 days.</p>
+    <p style="color:#F0C060;font-size:13px;margin:0">✦ Or click <strong>Approve &amp; Push</strong> per product below. Links expire in 7 days.</p>
   </div>
   <table style="width:100%;border-collapse:collapse;background:#120600;border:1px solid #2E1500;border-radius:10px;overflow:hidden">
     <thead><tr style="background:#160800">
@@ -684,8 +787,8 @@ function buildApprovalEmail(results, triggerType) {
 
 // ─── Bulk Approve All endpoint ────────────────────────────────────────────────
 app.get("/approve-all/:token", async (req, res) => {
-  const bulkKey  = "bulk_" + req.params.token;
-  const bulk     = pendingApprovals.get(bulkKey);
+  const bulkKey = "bulk_" + req.params.token;
+  const bulk    = pendingApprovals.get(bulkKey);
   if (!bulk || !bulk.isBulk) {
     return res.send(`<html><body style="font-family:sans-serif;background:#0D0500;color:#F5E6C8;display:flex;align-items:center;justify-content:center;height:100vh">
       <div style="text-align:center;padding:40px;border:1px solid #7B1C1C;border-radius:12px;background:#1A0A00;">
@@ -694,18 +797,17 @@ app.get("/approve-all/:token", async (req, res) => {
       </div></body></html>`);
   }
 
-  const tokens  = bulk.productTokens;
-  let pushed    = 0, failed = 0;
+  let pushed = 0, failed = 0;
   const details = [];
 
-  for (const token of tokens) {
+  for (const token of bulk.productTokens) {
     const approval = pendingApprovals.get(token);
     if (!approval) { failed++; continue; }
     try {
       const shopifyRes = await fetch(
         `https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${approval.productId}.json`,
-        { method: "PUT", headers: { "X-Shopify-Access-Token": storedAccessToken, "Content-Type": "application/json" },
-          body: JSON.stringify({ product: { id: approval.productId, ...approval.payload } }) }
+        { method:"PUT", headers:{"X-Shopify-Access-Token":storedAccessToken,"Content-Type":"application/json"},
+          body:JSON.stringify({ product:{ id:approval.productId, ...approval.payload } }) }
       );
       if (shopifyRes.ok) {
         pushed++;
@@ -715,15 +817,14 @@ app.get("/approve-all/:token", async (req, res) => {
         failed++;
         details.push(`<li style="color:#F08080;padding:4px 0">❌ ${approval.productTitle} — Push failed</li>`);
       }
-    } catch (e) {
+    } catch(e) {
       failed++;
       details.push(`<li style="color:#F08080;padding:4px 0">❌ ${approval.productTitle} — ${e.message}</li>`);
     }
-    await new Promise(r => setTimeout(r, 500)); // gentle rate limit between pushes
+    await new Promise(r => setTimeout(r, 500));
   }
 
   pendingApprovals.delete(bulkKey);
-
   res.send(`<html><body style="font-family:sans-serif;background:#0D0500;color:#F5E6C8;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px;box-sizing:border-box">
     <div style="text-align:center;padding:40px;border:1px solid #D4A017;border-radius:12px;background:#1A0A00;max-width:560px;width:100%">
       <div style="font-size:48px">🔱</div>
@@ -741,18 +842,18 @@ cron.schedule("30 17 * * 0", async () => {
   try {
     const res      = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products.json?limit=250&fields=id,title,body_html,tags,handle,status,metafields_global_title_tag,metafields_global_description_tag`, { headers:{"X-Shopify-Access-Token":storedAccessToken} });
     const data     = await res.json();
-    const products = (data.products||[]).filter(p=>p.status==="active");
+    const products = (data.products||[]).filter(p => p.status==="active");
     const results  = [];
     for (const product of products) {
       try {
         const r = await runSEOPipeline(product);
         results.push({ productId:product.id, productTitle:product.title, scoreBefore:r.scoreBefore, scoreAfter:r.scoreAfter,
           payload:{ body_html:r.description, metafields_global_title_tag:r.metaTitle, metafields_global_description_tag:r.metaDesc, tags:r.tags } });
-        await new Promise(r=>setTimeout(r,3000));
-      } catch (e) { console.error(`Cron failed for ${product.title}:`, e.message); }
+        await new Promise(r => setTimeout(r, 3000));
+      } catch(e) { console.error(`Cron failed for ${product.title}:`, e.message); }
     }
-    if (results.length>0) await sendEmail(`🔱 RudraKailash SEO Weekly Report — ${results.length} products`, buildApprovalEmail(results,"cron"));
-  } catch (e) { console.error("Weekly cron error:", e.message); }
+    if (results.length > 0) await sendEmail(`🔱 RudraKailash SEO Weekly Report — ${results.length} products`, buildApprovalEmail(results, "cron"));
+  } catch(e) { console.error("Weekly cron error:", e.message); }
 }, { timezone: "UTC" });
 
 // ─── Shopify webhook ──────────────────────────────────────────────────────────
@@ -761,7 +862,7 @@ app.post("/webhooks/products/create", async (req, res) => {
   const product = req.body;
   if (!product?.id) return;
   console.log(`🔔 Webhook: New product — ${product.title}`);
-  await new Promise(r=>setTimeout(r,5000));
+  await new Promise(r => setTimeout(r, 5000));
   try {
     const productRes  = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${product.id}.json?fields=id,title,body_html,tags,handle,status,metafields_global_title_tag,metafields_global_description_tag`, { headers:{"X-Shopify-Access-Token":storedAccessToken} });
     const fullProduct = (await productRes.json()).product;
@@ -769,8 +870,8 @@ app.post("/webhooks/products/create", async (req, res) => {
     const r = await runSEOPipeline(fullProduct);
     const results = [{ productId:fullProduct.id, productTitle:fullProduct.title, scoreBefore:r.scoreBefore, scoreAfter:r.scoreAfter,
       payload:{ body_html:r.description, metafields_global_title_tag:r.metaTitle, metafields_global_description_tag:r.metaDesc, tags:r.tags } }];
-    await sendEmail(`🔔 New Product SEO Ready — "${fullProduct.title}"`, buildApprovalEmail(results,"webhook"));
-  } catch (e) { console.error("Webhook error:", e.message); }
+    await sendEmail(`🔔 New Product SEO Ready — "${fullProduct.title}"`, buildApprovalEmail(results, "webhook"));
+  } catch(e) { console.error("Webhook error:", e.message); }
 });
 
 // ─── Register webhooks ────────────────────────────────────────────────────────
@@ -780,13 +881,13 @@ async function registerWebhooks() {
     const webhookUrl = `${APP_URL}/webhooks/products/create`;
     const listRes    = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/webhooks.json`, { headers:{"X-Shopify-Access-Token":storedAccessToken} });
     const listData   = await listRes.json();
-    if ((listData.webhooks||[]).find(w=>w.address===webhookUrl)) { console.log("✅ Webhook already registered"); return; }
+    if ((listData.webhooks||[]).find(w => w.address===webhookUrl)) { console.log("✅ Webhook already registered"); return; }
     const createRes  = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/webhooks.json`,
       { method:"POST", headers:{"X-Shopify-Access-Token":storedAccessToken,"Content-Type":"application/json"},
-        body:JSON.stringify({webhook:{topic:"products/create",address:webhookUrl,format:"json"}}) });
+        body:JSON.stringify({ webhook:{ topic:"products/create", address:webhookUrl, format:"json" } }) });
     const createData = await createRes.json();
     console.log(createData.webhook ? `✅ Webhook registered` : `⚠️  Webhook issue: ${JSON.stringify(createData)}`);
-  } catch (e) { console.error("Webhook registration failed:", e.message); }
+  } catch(e) { console.error("Webhook registration failed:", e.message); }
 }
 
 // ─── Manual triggers ──────────────────────────────────────────────────────────
@@ -797,24 +898,24 @@ app.post("/cron/trigger", async (req, res) => {
     try {
       const fetchRes = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products.json?limit=250&fields=id,title,body_html,tags,handle,status,metafields_global_title_tag,metafields_global_description_tag`, { headers:{"X-Shopify-Access-Token":storedAccessToken} });
       const data     = await fetchRes.json();
-      const products = (data.products||[]).filter(p=>p.status==="active");
+      const products = (data.products||[]).filter(p => p.status==="active");
       const results  = [];
       for (const product of products) {
         try {
           const r = await runSEOPipeline(product);
           results.push({ productId:product.id, productTitle:product.title, scoreBefore:r.scoreBefore, scoreAfter:r.scoreAfter,
             payload:{ body_html:r.description, metafields_global_title_tag:r.metaTitle, metafields_global_description_tag:r.metaDesc, tags:r.tags } });
-          await new Promise(r=>setTimeout(r,3000));
-        } catch (e) { console.error(`Manual cron failed for ${product.title}:`, e.message); }
+          await new Promise(r => setTimeout(r, 3000));
+        } catch(e) { console.error(`Manual cron failed for ${product.title}:`, e.message); }
       }
-      if (results.length>0) await sendEmail(`🔱 RudraKailash SEO Manual Report — ${results.length} products`, buildApprovalEmail(results,"manual"));
-    } catch (e) { console.error("Manual cron error:", e.message); }
+      if (results.length > 0) await sendEmail(`🔱 RudraKailash SEO Manual Report — ${results.length} products`, buildApprovalEmail(results, "manual"));
+    } catch(e) { console.error("Manual cron error:", e.message); }
   }, 100);
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 app.listen(PORT, async () => {
-  console.log(`🚀 RudraKailash SEO Proxy running on port ${PORT}`);
+  console.log(`🚀 RudraKailash SEO Proxy v8 running on port ${PORT}`);
   console.log(`   Store:         ${SHOPIFY_STORE_DOMAIN}`);
   console.log(`   Token:         ${storedAccessToken ? "✅ Loaded (" + (fs.existsSync(TOKEN_FILE) ? "disk" : "env") + ")" : "⚠️  Not yet"}`);
   console.log(`   Anthropic:     ${process.env.ANTHROPIC_API_KEY ? "✅" : "❌ NOT SET"}`);
@@ -822,5 +923,6 @@ app.listen(PORT, async () => {
   console.log(`   Email:         ${process.env.EMAIL_SMTP_USER   ? "✅ " + process.env.EMAIL_SMTP_USER : "❌ NOT SET"}`);
   console.log(`   Rank Tracking: ✅ Daily 6am IST · Weekly report Monday 7am IST`);
   console.log(`   SEO Cron:      ✅ Sunday 11pm IST`);
+  console.log(`   Keyword Ext:   ✅ H1 + H2/H3 + long-tail intent from competitors`);
   if (storedAccessToken) await registerWebhooks();
 });
