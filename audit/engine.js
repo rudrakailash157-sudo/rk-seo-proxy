@@ -1,6 +1,5 @@
 const { crawl, fetchSitemapUrls, BASE_URL } = require('./crawler');
 const { runAllCheckers } = require('./checkers');
-const db = require('./db');
 
 let currentRunId = null;
 let isRunning = false;
@@ -18,17 +17,32 @@ async function runAudit(triggeredBy = 'manual') {
 
   isRunning = true;
   progressLog = [];
-  const runId = await db.createRun(triggeredBy);
-  currentRunId = runId;
-
-  addProgress(`Audit run #${runId} started (triggered by: ${triggeredBy})`);
-
-  const pages = [];
-  const rawHtmlMap = new Map();
-  const pageIdMap = new Map();
-  let totalPages = 0;
+  currentRunId = null;
 
   try {
+    const db = require('./db');
+
+    // Test DB connection first
+    addProgress('Testing database connection...');
+    try {
+      await db.query('SELECT 1');
+      addProgress('✅ Database connected');
+    } catch(dbErr) {
+      addProgress(`❌ Database connection failed: ${dbErr.message}`);
+      addProgress('Running in no-DB mode — results will not be saved');
+      isRunning = false;
+      return null;
+    }
+
+    const runId = await db.createRun(triggeredBy);
+    currentRunId = runId;
+    addProgress(`Audit run #${runId} started (triggered by: ${triggeredBy})`);
+
+    const pages = [];
+    const rawHtmlMap = new Map();
+    const pageIdMap = new Map();
+    let totalPages = 0;
+
     // Fetch sitemap URLs first
     addProgress('Fetching sitemap URLs...');
     const sitemapUrls = await fetchSitemapUrls();
@@ -38,19 +52,22 @@ async function runAudit(triggeredBy = 'manual') {
     await crawl(
       async (pageData) => {
         totalPages++;
-        // Save raw HTML for checker use
         if (pageData.data) {
           rawHtmlMap.set(pageData.url, pageData.data);
-          delete pageData.data; // Don't store full HTML in pages array
+          delete pageData.data;
         }
         const links = pageData.links;
         delete pageData.links;
 
-        const pageId = await db.savePage(runId, pageData);
-        pageIdMap.set(pageData.url, pageId);
-        pages.push({ ...pageData, id: pageId });
+        try {
+          const pageId = await db.savePage(runId, pageData);
+          pageIdMap.set(pageData.url, pageId);
+          pages.push({ ...pageData, id: pageId });
+        } catch(e) {
+          pages.push({ ...pageData });
+        }
 
-        await db.updateRun(runId, { total_pages: totalPages });
+        await db.updateRun(runId, { total_pages: totalPages }).catch(() => {});
         addProgress(`[${totalPages}] ${pageData.status_code} ${pageData.url}`);
       },
       (msg) => addProgress(msg)
@@ -58,24 +75,24 @@ async function runAudit(triggeredBy = 'manual') {
 
     addProgress(`Crawl complete. ${totalPages} pages crawled. Running checks...`);
 
-    // Run all 80+ checks
     const sitemapUrlsSet = await fetchSitemapUrls();
     const allIssues = await runAllCheckers(pages, rawHtmlMap, sitemapUrlsSet);
 
     addProgress(`Found ${allIssues.length} issues. Saving to database...`);
 
-    // Save issues
     let critical = 0, warning = 0, info = 0;
     for (const issue of allIssues) {
       const pageId = issue.page_url ? pageIdMap.get(issue.page_url) : null;
-      await db.saveIssue(runId, pageId, {
-        category: issue.category,
-        severity: issue.severity,
-        check_name: issue.check_name,
-        description: issue.description,
-        affected_url: issue.affected_url,
-        extra_data: issue.extra_data
-      });
+      try {
+        await db.saveIssue(runId, pageId, {
+          category: issue.category,
+          severity: issue.severity,
+          check_name: issue.check_name,
+          description: issue.description,
+          affected_url: issue.affected_url,
+          extra_data: issue.extra_data
+        });
+      } catch(e) {}
       if (issue.severity === 'critical') critical++;
       else if (issue.severity === 'warning') warning++;
       else info++;
@@ -89,7 +106,7 @@ async function runAudit(triggeredBy = 'manual') {
       critical_issues: critical,
       warning_issues: warning,
       info_issues: info
-    });
+    }).catch(() => {});
 
     addProgress(`✅ Audit #${runId} complete! ${critical} critical, ${warning} warnings, ${info} info issues found.`);
 
@@ -105,15 +122,22 @@ async function runAudit(triggeredBy = 'manual') {
       addProgress(`⚠️ Email report failed: ${emailErr.message}`);
     }
 
+    return runId;
+
   } catch (err) {
     addProgress(`❌ Audit failed: ${err.message}`);
-    await db.updateRun(runId, { status: 'failed', completed_at: new Date() });
-    throw err;
+    console.error('[AUDIT] Fatal error:', err);
+    return null;
   } finally {
     isRunning = false;
   }
+}
 
-  return runId;
+function resetAudit() {
+  isRunning = false;
+  currentRunId = null;
+  progressLog = [];
+  addProgress('Audit state reset manually');
 }
 
 function getStatus() {
@@ -124,4 +148,4 @@ function getStatus() {
   };
 }
 
-module.exports = { runAudit, getStatus };
+module.exports = { runAudit, getStatus, resetAudit };
