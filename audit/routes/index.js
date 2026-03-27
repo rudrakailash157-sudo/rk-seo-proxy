@@ -102,6 +102,14 @@ router.get('/logout', (req, res) => {
 });
 
 // ─── API ROUTES ───────────────────────────────────────────────────────────────
+router.get('/api/reset', requireAuth, (req, res) => {
+  try {
+    const { resetAudit } = require('../engine');
+    resetAudit();
+    res.json({ success: true });
+  } catch(e) { res.json({ success: false }); }
+});
+
 router.post('/api/start', requireAuth, async (req, res) => {
   try {
     const { runAudit } = require('../engine');
