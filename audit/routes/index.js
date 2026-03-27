@@ -6,7 +6,7 @@ const path = require('path');
 const AUDIT_PASSWORD = process.env.AUDIT_PASSWORD || 'rudrakailash2024';
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
 
-// ─── IN-MEMORY SESSIONS (no DB required for auth) ─────────────────────────────
+// ─── IN-MEMORY SESSIONS ───────────────────────────────────────────────────────
 const sessions = new Map();
 
 function createSession() {
@@ -29,8 +29,7 @@ function requireAuth(req, res, next) {
   next();
 }
 
-// ─── AUTH ROUTES ──────────────────────────────────────────────────────────────
-
+// ─── LOGIN PAGE ───────────────────────────────────────────────────────────────
 router.get('/login', (req, res) => {
   res.send(`<!DOCTYPE html>
 <html><head>
@@ -61,7 +60,7 @@ router.get('/login', (req, res) => {
   <div class="om">🕉️</div>
   <h1>RudraKailash Audit</h1>
   <p>Site Health Dashboard</p>
-  ${req.query.error ? '<div class="error">❌ Incorrect password. Please try again.</div>' : ''}
+  ${req.query.error ? '<div class="error">Incorrect password. Please try again.</div>' : ''}
   <form method="POST" action="/audit/login">
     <input type="password" name="password" placeholder="Enter password" autofocus>
     <button type="submit">Enter Dashboard</button>
@@ -70,26 +69,32 @@ router.get('/login', (req, res) => {
 </body></html>`);
 });
 
+// ─── LOGIN POST ───────────────────────────────────────────────────────────────
 router.post('/login', (req, res) => {
   const { password } = req.body;
-  if (password !== AUDIT_PASSWORD) {
+  if (!password || password.trim() !== AUDIT_PASSWORD.trim()) {
     return res.redirect('/audit/login?error=1');
   }
   const sessionId = createSession();
   const expiresAt = new Date(Date.now() + SESSION_DURATION_MS);
-  res.cookie('audit_session', sessionId, { httpOnly: true, expires: expiresAt });
+  res.cookie('audit_session', sessionId, {
+    httpOnly: true,
+    expires: expiresAt,
+    sameSite: 'lax',
+    path: '/'
+  });
   res.redirect('/audit/dashboard');
 });
 
+// ─── LOGOUT ───────────────────────────────────────────────────────────────────
 router.get('/logout', (req, res) => {
   const sessionId = req.cookies?.audit_session;
   if (sessionId) sessions.delete(sessionId);
-  res.clearCookie('audit_session');
+  res.clearCookie('audit_session', { path: '/' });
   res.redirect('/audit/login');
 });
 
 // ─── API ROUTES ───────────────────────────────────────────────────────────────
-
 router.post('/api/start', requireAuth, async (req, res) => {
   try {
     const { runAudit } = require('../engine');
@@ -152,7 +157,6 @@ router.get('/api/runs/:id/pages', requireAuth, async (req, res) => {
 });
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
-
 router.get('/dashboard', requireAuth, (req, res) => {
   res.sendFile('index.html', { root: path.join(__dirname, '../dashboard') });
 });
