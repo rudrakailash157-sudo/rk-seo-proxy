@@ -774,7 +774,7 @@
 
   // ── UTILS ─────────────────────────────────────────────────────
   async function api(path, method = 'GET') {
-    const res = await fetch('/audit' + path, { method, credentials: 'same-origin' });
+    const res = await fetch('/audit' + path, { method, credentials: 'include' });
     if (res.status === 401) { window.location.href = '/audit/login'; return; }
     if (!res.ok) throw new Error(await res.text());
     return res.json();
@@ -798,4 +798,3 @@
 </script>
 </body>
 </html>
-
