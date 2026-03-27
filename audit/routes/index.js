@@ -25,7 +25,13 @@ function validateSession(id) {
 
 function requireAuth(req, res, next) {
   const sessionId = req.cookies?.audit_session;
-  if (!validateSession(sessionId)) return res.redirect('/audit/login');
+  if (!validateSession(sessionId)) {
+    // For API routes return 401 JSON, not redirect
+    if (req.path.startsWith('/api/')) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    return res.redirect('/audit/login');
+  }
   next();
 }
 
@@ -79,8 +85,9 @@ router.post('/login', (req, res) => {
   const expiresAt = new Date(Date.now() + SESSION_DURATION_MS);
   res.cookie('audit_session', sessionId, {
     httpOnly: true,
+    secure: true,
+    sameSite: 'none',
     expires: expiresAt,
-    sameSite: 'lax',
     path: '/'
   });
   res.redirect('/audit/dashboard');
@@ -90,7 +97,7 @@ router.post('/login', (req, res) => {
 router.get('/logout', (req, res) => {
   const sessionId = req.cookies?.audit_session;
   if (sessionId) sessions.delete(sessionId);
-  res.clearCookie('audit_session', { path: '/' });
+  res.clearCookie('audit_session', { path: '/', secure: true, sameSite: 'none' });
   res.redirect('/audit/login');
 });
 
