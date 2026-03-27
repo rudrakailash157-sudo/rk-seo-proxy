@@ -67,7 +67,7 @@ router.post('/login', async (req, res) => {
   const expiresAt = new Date(Date.now() + SESSION_DURATION_HOURS * 60 * 60 * 1000);
   await db.createSession(sessionId, expiresAt);
   res.cookie('audit_session', sessionId, { httpOnly: true, expires: expiresAt });
-  res.redirect('/audit');
+  res.redirect('/audit/dashboard');
 });
 
 router.get('/logout', async (req, res) => {
@@ -119,11 +119,15 @@ router.get('/api/runs/:id/pages', requireAuth, async (req, res) => {
   res.json(pages);
 });
 
-// ─── DASHBOARD (served from static files) ────────────────────────────────────
+// ─── DASHBOARD ────────────────────────────────────────────────────────────────
 
-router.get('/', requireAuth, (req, res) => {
+router.get('/dashboard', requireAuth, (req, res) => {
   res.sendFile('index.html', { root: __dirname + '/../dashboard' });
 });
 
-module.exports = router;
+// Root /audit → redirect to login
+router.get('/', (req, res) => {
+  res.redirect('/audit/login');
+});
 
+module.exports = router;
