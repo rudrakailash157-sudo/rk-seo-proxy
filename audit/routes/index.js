@@ -1,19 +1,31 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
-const db = require('../db');
-const { runAudit, getStatus } = require('../engine');
+const path = require('path');
 
 const AUDIT_PASSWORD = process.env.AUDIT_PASSWORD || 'rudrakailash2024';
-const SESSION_DURATION_HOURS = 24;
+const SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
 
-// ─── AUTH MIDDLEWARE ──────────────────────────────────────────────────────────
+// ─── IN-MEMORY SESSIONS (no DB required for auth) ─────────────────────────────
+const sessions = new Map();
 
-async function requireAuth(req, res, next) {
+function createSession() {
+  const id = crypto.randomBytes(32).toString('hex');
+  sessions.set(id, { createdAt: Date.now(), expiresAt: Date.now() + SESSION_DURATION_MS });
+  return id;
+}
+
+function validateSession(id) {
+  if (!id) return false;
+  const session = sessions.get(id);
+  if (!session) return false;
+  if (Date.now() > session.expiresAt) { sessions.delete(id); return false; }
+  return true;
+}
+
+function requireAuth(req, res, next) {
   const sessionId = req.cookies?.audit_session;
-  if (!sessionId) return res.redirect('/audit/login');
-  const session = await db.getSession(sessionId).catch(() => null);
-  if (!session) return res.redirect('/audit/login');
+  if (!validateSession(sessionId)) return res.redirect('/audit/login');
   next();
 }
 
@@ -58,21 +70,20 @@ router.get('/login', (req, res) => {
 </body></html>`);
 });
 
-router.post('/login', async (req, res) => {
+router.post('/login', (req, res) => {
   const { password } = req.body;
   if (password !== AUDIT_PASSWORD) {
     return res.redirect('/audit/login?error=1');
   }
-  const sessionId = crypto.randomBytes(32).toString('hex');
-  const expiresAt = new Date(Date.now() + SESSION_DURATION_HOURS * 60 * 60 * 1000);
-  await db.createSession(sessionId, expiresAt);
+  const sessionId = createSession();
+  const expiresAt = new Date(Date.now() + SESSION_DURATION_MS);
   res.cookie('audit_session', sessionId, { httpOnly: true, expires: expiresAt });
   res.redirect('/audit/dashboard');
 });
 
-router.get('/logout', async (req, res) => {
+router.get('/logout', (req, res) => {
   const sessionId = req.cookies?.audit_session;
-  if (sessionId) await db.deleteSession(sessionId).catch(() => {});
+  if (sessionId) sessions.delete(sessionId);
   res.clearCookie('audit_session');
   res.redirect('/audit/login');
 });
@@ -81,6 +92,7 @@ router.get('/logout', async (req, res) => {
 
 router.post('/api/start', requireAuth, async (req, res) => {
   try {
+    const { runAudit } = require('../engine');
     runAudit('manual').catch(err => console.error('Audit error:', err));
     res.json({ success: true, message: 'Audit started' });
   } catch (err) {
@@ -89,43 +101,62 @@ router.post('/api/start', requireAuth, async (req, res) => {
 });
 
 router.get('/api/status', requireAuth, (req, res) => {
-  res.json(getStatus());
+  try {
+    const { getStatus } = require('../engine');
+    res.json(getStatus());
+  } catch(e) {
+    res.json({ is_running: false, current_run_id: null, progress: [] });
+  }
 });
 
 router.get('/api/runs', requireAuth, async (req, res) => {
-  const runs = await db.getRecentRuns(20);
-  res.json(runs);
+  try {
+    const db = require('../db');
+    const runs = await db.getRecentRuns(20);
+    res.json(runs);
+  } catch(e) { res.json([]); }
 });
 
 router.get('/api/runs/:id', requireAuth, async (req, res) => {
-  const run = await db.getRunWithStats(req.params.id);
-  if (!run) return res.status(404).json({ error: 'Run not found' });
-  res.json(run);
+  try {
+    const db = require('../db');
+    const run = await db.getRunWithStats(req.params.id);
+    if (!run) return res.status(404).json({ error: 'Run not found' });
+    res.json(run);
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 router.get('/api/runs/:id/issues', requireAuth, async (req, res) => {
-  const { category, severity } = req.query;
-  const issues = await db.getRunIssues(req.params.id, { category, severity });
-  res.json(issues);
+  try {
+    const db = require('../db');
+    const { category, severity } = req.query;
+    const issues = await db.getRunIssues(req.params.id, { category, severity });
+    res.json(issues);
+  } catch(e) { res.json([]); }
 });
 
 router.get('/api/runs/:id/summary', requireAuth, async (req, res) => {
-  const summary = await db.getIssueSummary(req.params.id);
-  res.json(summary);
+  try {
+    const db = require('../db');
+    const summary = await db.getIssueSummary(req.params.id);
+    res.json(summary);
+  } catch(e) { res.json([]); }
 });
 
 router.get('/api/runs/:id/pages', requireAuth, async (req, res) => {
-  const pages = await db.getRunPages(req.params.id);
-  res.json(pages);
+  try {
+    const db = require('../db');
+    const pages = await db.getRunPages(req.params.id);
+    res.json(pages);
+  } catch(e) { res.json([]); }
 });
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
 
 router.get('/dashboard', requireAuth, (req, res) => {
-  res.sendFile('index.html', { root: __dirname + '/../dashboard' });
+  res.sendFile('index.html', { root: path.join(__dirname, '../dashboard') });
 });
 
-// Root /audit → redirect to login
 router.get('/', (req, res) => {
   res.redirect('/audit/login');
 });
