@@ -6,6 +6,7 @@ const fs         = require("fs");
 const path       = require("path");
 const cron       = require("node-cron");
 const nodemailer = require("nodemailer");
+const auditModule = require("./audit"); // ← ADDED
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -78,6 +79,8 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json());
+app.use(express.urlencoded({ extended: true })); // ← ADDED (needed by audit login form)
+auditModule.register(app); // ← ADDED
 
 // ─── Email transporter ────────────────────────────────────────────────────────
 const transporter = nodemailer.createTransport({
@@ -230,23 +233,19 @@ function isMarketplace(url) {
   return MARKETPLACE_DOMAINS.some(d => url.toLowerCase().includes(d));
 }
 
-// ── v8 UPDATE: extractTextFromHTML now returns structured { text, headings } ──
 function extractTextFromHTML(html) {
-  // Extract H1 headings — primary keyword signals
   const h1Matches = [...html.matchAll(/<h1[^>]*>([\s\S]*?)<\/h1>/gi)];
   const h1s = h1Matches
     .map(m => m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim())
     .filter(Boolean)
     .slice(0, 5);
 
-  // Extract H2 + H3 headings — sub-topic and LSI keyword signals
   const h2h3Matches = [...html.matchAll(/<h[23][^>]*>([\s\S]*?)<\/h[23]>/gi)];
   const h2h3s = h2h3Matches
     .map(m => m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim())
     .filter(Boolean)
     .slice(0, 12);
 
-  // Clean body text
   const bodyText = html
     .replace(/<script[\s\S]*?<\/script>/gi, "")
     .replace(/<style[\s\S]*?<\/style>/gi, "")
@@ -261,7 +260,6 @@ function extractTextFromHTML(html) {
   return { text: bodyText, headings: { h1: h1s, h2h3: h2h3s } };
 }
 
-// ── v8 UPDATE: fetchPageText now returns structured { text, headings } or null
 async function fetchPageText(url) {
   try {
     const controller = new AbortController();
@@ -279,7 +277,6 @@ async function fetchPageText(url) {
   } catch (e) { return null; }
 }
 
-// ── v8 UPDATE: runCompetitorResearch now returns headings alongside content ───
 async function runCompetitorResearch(productTitle) {
   const SERPER_KEY = process.env.SERPER_API_KEY;
   if (!SERPER_KEY) return [];
@@ -307,14 +304,13 @@ async function runCompetitorResearch(productTitle) {
       }
     }
 
-    // Fetch top 10 competitors, extracting headings + body text
     const competitors = [];
     for (const result of allResults.slice(0, 10)) {
       const extracted = await fetchPageText(result.url);
       competitors.push({
         ...result,
-        content:  extracted ? extracted.text              : result.snippet,
-        headings: extracted ? extracted.headings          : { h1: [], h2h3: [] },
+        content:  extracted ? extracted.text     : result.snippet,
+        headings: extracted ? extracted.headings : { h1: [], h2h3: [] },
         fetched:  !!extracted,
       });
     }
@@ -506,7 +502,7 @@ cron.schedule("30 1 * * 1", async () => {
   console.log("📊 Weekly rank report sent.");
 }, { timezone: "UTC" });
 
-// ─── SEO Pipeline (server-side cron / webhook) ────────────────────────────────
+// ─── SEO Pipeline ─────────────────────────────────────────────────────────────
 function cleanAIOutput(text) {
   return text.replace(/^```(?:html)?\s*/i, "").replace(/\s*```\s*$/,"").trim();
 }
@@ -547,7 +543,6 @@ function scoreSEO(metaTitle, metaDesc, tags, desc) {
   return Math.round(checks.reduce((s,c,i) => s+(c?pts[i]:0), 0) / pts.reduce((s,p) => s+p, 0) * 100);
 }
 
-// ── v8 UPDATE: runSEOPipeline now includes keyword extraction for cron/webhook
 async function runSEOPipeline(product) {
   console.log(`🤖 SEO pipeline: ${product.title}`);
   const descPlain   = (product.body_html||"").replace(/<[^>]+>/g,"").slice(0,400);
@@ -556,7 +551,6 @@ async function runSEOPipeline(product) {
     ? `Top ${competitors.length} competitors: ${competitors.map(c=>c.title).join(", ")}`
     : "No competitor data.";
 
-  // Keyword extraction from competitor H1/H2/H3 + body
   let keywordBrief = "";
   if (competitors.length > 0) {
     try {
@@ -594,7 +588,6 @@ Output ONLY:
     } catch(e) { console.warn("Keyword extraction failed:", e.message); }
   }
 
-  // Gap analysis — informed by extracted keywords
   let gapSummary = "Cover all key topics comprehensively.";
   if (competitors.length > 0) {
     try {
@@ -677,7 +670,6 @@ OUTPUT: Clean HTML only, starting with <h2>. Rudraksha bead content only.`,
     tags:        tags.status        === "fulfilled" ? tags.value        : product.tags || "",
   };
 
-  // Auto-register for rank tracking
   const keywords = loadKeywords();
   if (!keywords[product.id]) {
     keywords[product.id] = {
@@ -924,5 +916,6 @@ app.listen(PORT, async () => {
   console.log(`   Rank Tracking: ✅ Daily 6am IST · Weekly report Monday 7am IST`);
   console.log(`   SEO Cron:      ✅ Sunday 11pm IST`);
   console.log(`   Keyword Ext:   ✅ H1 + H2/H3 + long-tail intent from competitors`);
+  console.log(`   Site Audit:    ✅ Dashboard at /audit · Weekly Sunday 11pm IST`);
   if (storedAccessToken) await registerWebhooks();
 });
