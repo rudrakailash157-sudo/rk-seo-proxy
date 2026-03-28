@@ -6,7 +6,15 @@ const fs         = require("fs");
 const path       = require("path");
 const cron       = require("node-cron");
 const nodemailer = require("nodemailer");
-const auditModule = require("./audit"); // ← ADDED
+
+// ─── Audit module (safe load — won't crash SEO server if audit fails) ─────────
+let auditModule = null;
+try {
+  auditModule = require("./audit/index");   // folder → index.js
+  console.log("✅ Audit module loaded from ./audit/index");
+} catch (e) {
+  console.warn("⚠️  Audit module not loaded (SEO features unaffected):", e.message);
+}
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -79,8 +87,15 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json());
-app.use(express.urlencoded({ extended: true })); // ← ADDED (needed by audit login form)
-auditModule.register(app); // ← ADDED
+app.use(express.urlencoded({ extended: true }));
+
+// Register audit module only if it loaded successfully
+if (auditModule && typeof auditModule.register === "function") {
+  auditModule.register(app);
+  console.log("✅ Audit routes registered");
+} else {
+  console.warn("⚠️  Audit routes not registered — /audit endpoint unavailable");
+}
 
 // ─── Email transporter ────────────────────────────────────────────────────────
 const transporter = nodemailer.createTransport({
@@ -112,6 +127,7 @@ app.get("/", (req, res) => {
     anthropicKeyConfigured: !!process.env.ANTHROPIC_API_KEY,
     serperConfigured:       !!process.env.SERPER_API_KEY,
     emailConfigured:        !!(process.env.EMAIL_SMTP_USER && process.env.EMAIL_SMTP_PASS),
+    auditModuleLoaded:      !!auditModule,
     rankTracking: {
       trackedProducts: trackedCount,
       dataPoints: Object.values(rankData).reduce((s, p) => s + (p.history?.length || 0), 0),
@@ -551,7 +567,10 @@ async function runSEOPipeline(product) {
     ? `Top ${competitors.length} competitors: ${competitors.map(c=>c.title).join(", ")}`
     : "No competitor data.";
 
+  // ── Keyword extraction ──────────────────────────────────────────────────────
+  let extractedKeywords = { h1: [], h2h3: [], phrases: [] };
   let keywordBrief = "";
+
   if (competitors.length > 0) {
     try {
       const compHeadingInput = competitors.map((c, i) => {
@@ -579,15 +598,31 @@ Output ONLY:
 
       try {
         const kw = JSON.parse(kwRaw.replace(/^```json\s*/i,"").replace(/\s*```$/,"").trim());
+        extractedKeywords = {
+          h1:      kw.h1      || [],
+          h2h3:    kw.h2h3    || [],
+          phrases: kw.phrases || [],
+        };
+
+        // ── Build structured per-section keyword brief ──────────────────────
+        const h1List      = extractedKeywords.h1.slice(0, 5).join(" / ");
+        const h2h3List    = extractedKeywords.h2h3.slice(0, 8).join(", ");
+        const phraseList  = extractedKeywords.phrases.slice(0, 8).join(", ");
+
         keywordBrief = [
-          kw.h1?.length      ? `PRIMARY (H1): ${kw.h1.join(", ")}`          : "",
-          kw.h2h3?.length    ? `SUB-TOPICS (H2/H3): ${kw.h2h3.join(", ")}` : "",
-          kw.phrases?.length ? `LONG-TAIL INTENT: ${kw.phrases.join(", ")}` : "",
+          h1List    ? `H1 PRIMARY KEYWORDS (use in <h2> and opening <p>): ${h1List}` : "",
+          h2h3List  ? `H2/H3 SUB-TOPIC KEYWORDS (use as or inside <h3> headings — naturally, not forced): ${h2h3List}` : "",
+          phraseList? `LONG-TAIL INTENT PHRASES (weave into bullets and FAQ questions — express the intent naturally, do NOT paste verbatim): ${phraseList}` : "",
         ].filter(Boolean).join("\n");
-      } catch(e) { keywordBrief = ""; }
+
+      } catch(e) {
+        console.warn("Keyword JSON parse failed:", e.message);
+        keywordBrief = "";
+      }
     } catch(e) { console.warn("Keyword extraction failed:", e.message); }
   }
 
+  // ── Gap analysis ────────────────────────────────────────────────────────────
   let gapSummary = "Cover all key topics comprehensively.";
   if (competitors.length > 0) {
     try {
@@ -607,7 +642,25 @@ Output ONLY:
   }
 
   const isHalfMoon = /half.?moon|1\s*mukhi/i.test(product.title);
+
+  // ── Build mandatory keyword placement instructions ──────────────────────────
+  const kwPlacementInstructions = keywordBrief
+    ? `MANDATORY KEYWORD PLACEMENT — follow section by section, intent-based not stuffed:
+${keywordBrief}
+
+PLACEMENT RULES:
+- <h2>: Must contain one of the H1 PRIMARY KEYWORDS (exact or close variant)
+- Opening <p>: Naturally include the primary H1 keyword within first 60 words. If H1 includes regional/alternate names (e.g. "Chandrakar Kaju bead", "Ek Mukhi", "Bhadraksha"), introduce them as "also known as..."
+- <h3> headings: Use H2/H3 SUB-TOPIC KEYWORDS as heading phrases where they fit — skip if forced
+- "What Seekers Describe" bullets: Each bullet should address one LONG-TAIL INTENT PHRASE — rephrase as seeker experience (e.g. "1 mukhi rudraksha for meditation" → "Practitioners report deepening meditation focus with regular wear")
+- "Who Should Buy" bullets: Address buying-intent phrases as authenticity/value statements
+- RKRTL section: Naturally include certification-related long-tail phrases
+- FAQ questions: Word at least 2 questions using the exact phrasing of LONG-TAIL INTENT phrases — these are real queries people type`
+    : `KEYWORD GUIDANCE: Use standard Rudraksha SEO keywords appropriate to this product. Include the product title naturally in the <h2> and opening paragraph.`;
+
+  // ── Run all agents — independent, no cascade failure ───────────────────────
   const [description, metaTitle, metaDesc, tags] = await Promise.allSettled([
+
     callClaude(
       `You are a Rudraksha SEO expert writing concise, scannable product descriptions for RudraKailash.com. Rules: (1) SEO — keyword in first <h2>, keyword in first <p> within 100 words, 1–2% density, LSI keywords in every <h3>, no stuffing; (2) E-E-A-T — experience framing ("seekers describe…"), Vedic scripture citations, Elaeocarpus ganitrus botanical name, RKRTL as independent lab, zero direct health/benefit claims; (3) Feb 2026 Google Discover — original perspective, depth, clear non-clickbait headings, Indian audience. LENGTH RULE: Each section MAX 4 lines of prose. If a section needs more than 4 lines, use a <ul> bullet list instead of a paragraph. Keep total description under 600 words. Output clean HTML only. No markdown. No preamble.`,
       `Write a concise SEO product description for "${product.title}" on RudraKailash.com.
@@ -649,27 +702,46 @@ STRUCTURE:
 <h3>Frequently Asked Questions About ${product.title}</h3>
 <dl>[4 FAQs numbered 1–4, questions in <dt><strong>1. Question text</strong></dt> format, answers in <dd>: (1) authenticity/certification process, (2) origin/form of the bead, (3) who can wear it, (4) general value/quality — do NOT mention any specific size in mm or price ranges in rupees]</dl>
 
-COMPETITOR KEYWORD TARGETS:
-${keywordBrief || "Use standard Rudraksha SEO keywords."}
+${kwPlacementInstructions}
 
-GAPS TO ADDRESS: ${gapSummary}
-CURRENT DESCRIPTION: ${descPlain}
+CONTENT GAPS TO COVER: ${gapSummary}
+CURRENT DESCRIPTION (for reference only): ${descPlain}
 
 OUTPUT: Clean HTML only, starting with <h2>. Rudraksha bead content only.`,
       5000
     ),
-    callClaude(`SEO specialist. Output ONLY meta title. No quotes.`, `Meta title for "${product.title}" on RudraKailash.com. Max 60 chars. Keyword + brand.`),
-    callClaude(`SEO specialist. Output ONLY meta description. No quotes.`, `Meta desc for "${product.title}". 145-155 chars. RKRTL certified + CTA.`),
-    callClaude(`Shopify SEO expert. Output ONLY comma-separated tags.`, `10-12 tags for "${product.title}". Current: "${product.tags||"none"}". Include mukhi variants, RKRTL, certified authentic.`),
+
+    callClaude(
+      `SEO specialist. Output ONLY the meta title text. No quotes. No explanation.`,
+      `Write a meta title for "${product.title}" on RudraKailash.com. Max 60 chars. Include main keyword + brand name "RudraKailash".`
+    ),
+
+    callClaude(
+      `SEO specialist. Output ONLY the meta description text. No quotes. No explanation.`,
+      `Write a meta description for "${product.title}" on RudraKailash.com. 145–155 characters. Mention RKRTL certified and include a call to action (Shop Now / Buy Authentic).`
+    ),
+
+    callClaude(
+      `Shopify SEO expert. Output ONLY comma-separated tags. No explanation.`,
+      `Generate 10–12 Shopify product tags for "${product.title}". Current tags: "${product.tags||"none"}". Include mukhi number variants, rudraksha, RKRTL, certified, authentic, and relevant spiritual keywords.`
+    ),
   ]);
 
   const result = {
-    description: description.status === "fulfilled" ? description.value : "<p>Generation failed</p>",
+    description: description.status === "fulfilled" ? description.value : "<p>Generation failed. Please re-run the agent.</p>",
     metaTitle:   metaTitle.status   === "fulfilled" ? metaTitle.value   : product.title,
     metaDesc:    metaDesc.status    === "fulfilled" ? metaDesc.value    : "",
     tags:        tags.status        === "fulfilled" ? tags.value        : product.tags || "",
   };
 
+  // Log any agent failures for debugging
+  [description, metaTitle, metaDesc, tags].forEach((r, i) => {
+    if (r.status === "rejected") {
+      console.error(`❌ Agent ${["description","metaTitle","metaDesc","tags"][i]} failed:`, r.reason?.message || r.reason);
+    }
+  });
+
+  // ── Auto-register for rank tracking ────────────────────────────────────────
   const keywords = loadKeywords();
   if (!keywords[product.id]) {
     keywords[product.id] = {
@@ -915,7 +987,7 @@ app.listen(PORT, async () => {
   console.log(`   Email:         ${process.env.EMAIL_SMTP_USER   ? "✅ " + process.env.EMAIL_SMTP_USER : "❌ NOT SET"}`);
   console.log(`   Rank Tracking: ✅ Daily 6am IST · Weekly report Monday 7am IST`);
   console.log(`   SEO Cron:      ✅ Sunday 11pm IST`);
-  console.log(`   Keyword Ext:   ✅ H1 + H2/H3 + long-tail intent from competitors`);
-  console.log(`   Site Audit:    ✅ Dashboard at /audit · Weekly Sunday 11pm IST`);
+  console.log(`   Keyword Ext:   ✅ H1 + H2/H3 + long-tail intent · Per-section placement rules`);
+  console.log(`   Audit Module:  ${auditModule ? "✅ Loaded" : "⚠️  Not loaded (check audit/index.js)"}`);
   if (storedAccessToken) await registerWebhooks();
 });
