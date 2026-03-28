@@ -296,15 +296,28 @@ async function fetchPageText(url) {
 async function runCompetitorResearch(productTitle) {
   const SERPER_KEY = process.env.SERPER_API_KEY;
   if (!SERPER_KEY) return [];
+
+  // Extract core keyword — strip common suffixes so queries stay clean
+  // e.g. "11 Mukhi Rudraksha Bracelet" → "11 Mukhi Rudraksha"
+  const coreTitle = productTitle
+    .replace(/\s*(bracelet|mala|pendant|ring|set|combo|pack|pair)\s*$/i, "")
+    .trim();
+
+  // Four queries — informational first (avoids marketplace-dominated SERPs),
+  // commercial second. Serper dedupes naturally across queries via seenUrls.
+  const queries = [
+    `${coreTitle} benefits significance`,          // informational — blogs/articles rank here
+    `${coreTitle} Shiva Purana Vedic meaning`,     // spiritual — content sites rank here
+    `${coreTitle} certification authentic`,        // trust — avoids pure marketplaces
+    `${coreTitle}`,                                // bare — catches any remaining good pages
+  ];
+
   try {
-    const queries   = [
-      `${productTitle} buy online authentic certified`,
-      `${productTitle} spiritual benefits Vedic`,
-    ];
-    const seenUrls  = new Set();
+    const seenUrls   = new Set();
     const allResults = [];
 
     for (const query of queries) {
+      if (allResults.length >= 12) break;          // enough candidates, stop early
       const serperRes  = await fetch("https://google.serper.dev/search", {
         method: "POST",
         headers: { "X-API-KEY": SERPER_KEY, "Content-Type": "application/json" },
@@ -313,12 +326,20 @@ async function runCompetitorResearch(productTitle) {
       const serperData = await serperRes.json();
       for (const result of (serperData.organic || [])) {
         const url = result.link || "";
-        if (url && !isMarketplace(url) && !url.includes("rudrakailash.com") && !seenUrls.has(url)) {
+        if (
+          url &&
+          !isMarketplace(url) &&
+          !url.includes("rudrakailash.com") &&
+          !url.includes("google.") &&
+          !seenUrls.has(url)
+        ) {
           seenUrls.add(url);
           allResults.push({ url, title: result.title || "", snippet: result.snippet || "" });
         }
       }
     }
+
+    console.log(`🔍 Competitor candidates for "${productTitle}": ${allResults.length} after marketplace filter`);
 
     const competitors = [];
     for (const result of allResults.slice(0, 10)) {
@@ -330,8 +351,13 @@ async function runCompetitorResearch(productTitle) {
         fetched:  !!extracted,
       });
     }
+
+    console.log(`🔍 Competitor pages fetched: ${competitors.filter(c => c.fetched).length}/${competitors.length}`);
     return competitors;
-  } catch (e) { return []; }
+  } catch (e) {
+    console.warn("Competitor research failed:", e.message);
+    return [];
+  }
 }
 
 app.post("/competitor/research", async (req, res) => {
@@ -708,7 +734,7 @@ CONTENT GAPS TO COVER: ${gapSummary}
 CURRENT DESCRIPTION (for reference only): ${descPlain}
 
 OUTPUT: Clean HTML only, starting with <h2>. Rudraksha bead content only.`,
-      5000
+      4000
     ),
 
     callClaude(
