@@ -1,20 +1,22 @@
 const mysql = require('mysql2/promise');
 
+// No SSL — Hostinger shared MySQL does not support SSL from external connections
+// Pool is created lazily on first query, not on module load
 let pool = null;
 
 function getPool() {
   if (!pool) {
     pool = mysql.createPool({
-      host: process.env.AUDIT_DB_HOST,
-      port: parseInt(process.env.AUDIT_DB_PORT || '3306'),
-      user: process.env.AUDIT_DB_USER,
-      password: process.env.AUDIT_DB_PASSWORD,
-      database: process.env.AUDIT_DB_NAME,
+      host:             process.env.AUDIT_DB_HOST,
+      port:             parseInt(process.env.AUDIT_DB_PORT || '3306'),
+      user:             process.env.AUDIT_DB_USER,
+      password:         process.env.AUDIT_DB_PASSWORD,
+      database:         process.env.AUDIT_DB_NAME,
       waitForConnections: true,
-      connectionLimit: 5,
-      queueLimit: 0,
-      connectTimeout: 30000,
-      ssl: { rejectUnauthorized: false }
+      connectionLimit:  5,
+      queueLimit:       0,
+      connectTimeout:   30000,
+      // NO ssl option — Hostinger shared MySQL rejects SSL from Render
     });
   }
   return pool;
@@ -23,6 +25,20 @@ function getPool() {
 async function query(sql, params = []) {
   const [rows] = await getPool().execute(sql, params);
   return rows;
+}
+
+// ─── Test connection (called at startup, failure is non-fatal) ────────────────
+async function testConnection() {
+  try {
+    console.log('[AUDIT] Testing database connection...');
+    await query('SELECT 1');
+    console.log('[AUDIT] ✅ Database connected successfully');
+    return true;
+  } catch (e) {
+    console.error('[AUDIT] ✕ Database connection failed:', e.message);
+    console.error('[AUDIT] Running in no-DB mode — results will not be saved');
+    return false;
+  }
 }
 
 async function createRun(triggeredBy = 'manual') {
@@ -49,18 +65,29 @@ async function savePage(runId, pageData) {
       og_title, og_description, og_image, crawled_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
   `, [
-    runId, pageData.url, pageData.status_code || null,
-    pageData.redirect_url || null,
-    pageData.redirect_chain ? JSON.stringify(pageData.redirect_chain) : null,
-    pageData.content_type || null, pageData.page_size_bytes || 0,
-    pageData.load_time_ms || 0, pageData.title || null,
-    pageData.meta_description || null, pageData.h1 || null,
-    pageData.canonical_url || null, pageData.word_count || 0,
-    pageData.image_count || 0, pageData.internal_link_count || 0,
-    pageData.external_link_count || 0, pageData.is_in_sitemap ? 1 : 0,
-    pageData.is_indexable ? 1 : 0, pageData.robots_directive || null,
-    pageData.schema_types ? JSON.stringify(pageData.schema_types) : null,
-    pageData.og_title || null, pageData.og_description || null, pageData.og_image || null
+    runId,
+    pageData.url,
+    pageData.status_code     || null,
+    pageData.redirect_url    || null,
+    pageData.redirect_chain  ? JSON.stringify(pageData.redirect_chain) : null,
+    pageData.content_type    || null,
+    pageData.page_size_bytes || 0,
+    pageData.load_time_ms    || 0,
+    pageData.title           || null,
+    pageData.meta_description|| null,
+    pageData.h1              || null,
+    pageData.canonical_url   || null,
+    pageData.word_count      || 0,
+    pageData.image_count     || 0,
+    pageData.internal_link_count  || 0,
+    pageData.external_link_count  || 0,
+    pageData.is_in_sitemap   ? 1 : 0,
+    pageData.is_indexable    ? 1 : 0,
+    pageData.robots_directive|| null,
+    pageData.schema_types    ? JSON.stringify(pageData.schema_types) : null,
+    pageData.og_title        || null,
+    pageData.og_description  || null,
+    pageData.og_image        || null,
   ]);
   return result.insertId;
 }
@@ -70,9 +97,14 @@ async function saveIssue(runId, pageId, issue) {
     INSERT INTO audit_issues (run_id, page_id, category, severity, check_name, description, affected_url, extra_data)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `, [
-    runId, pageId || null, issue.category, issue.severity,
-    issue.check_name, issue.description, issue.affected_url || null,
-    issue.extra_data ? JSON.stringify(issue.extra_data) : null
+    runId,
+    pageId || null,
+    issue.category,
+    issue.severity,
+    issue.check_name,
+    issue.description,
+    issue.affected_url || null,
+    issue.extra_data   ? JSON.stringify(issue.extra_data) : null,
   ]);
 }
 
@@ -82,21 +114,11 @@ async function getRunWithStats(runId) {
 }
 
 async function getRecentRuns(limit = 10) {
-  return query('SELECT * FROM audit_runs ORDER BY started_at DESC LIMIT ?', [limit]);
+  return query('SELECT * FROM audit_runs ORDER BY id DESC LIMIT ?', [limit]);
 }
 
-async function getRunIssues(runId, filters = {}) {
-  let sql = `
-    SELECT ai.*, ap.url as page_url
-    FROM audit_issues ai
-    LEFT JOIN audit_pages ap ON ai.page_id = ap.id
-    WHERE ai.run_id = ?
-  `;
-  const params = [runId];
-  if (filters.category) { sql += ' AND ai.category = ?'; params.push(filters.category); }
-  if (filters.severity) { sql += ' AND ai.severity = ?'; params.push(filters.severity); }
-  sql += ' ORDER BY FIELD(ai.severity,"critical","warning","info"), ai.category LIMIT 1000';
-  return query(sql, params);
+async function getRunIssues(runId) {
+  return query('SELECT * FROM audit_issues WHERE run_id = ? ORDER BY FIELD(severity,"critical","warning","info"), category', [runId]);
 }
 
 async function getRunPages(runId) {
@@ -121,7 +143,7 @@ async function getPreviousRun(currentRunId) {
 }
 
 module.exports = {
-  query, createRun, updateRun, savePage, saveIssue,
+  query, testConnection, createRun, updateRun, savePage, saveIssue,
   getRunWithStats, getRecentRuns, getRunIssues, getRunPages,
   getIssueSummary, getPreviousRun
 };
