@@ -1,22 +1,22 @@
 const mysql = require('mysql2/promise');
 
-// No SSL — Hostinger shared MySQL does not support SSL from external connections
-// Pool is created lazily on first query, not on module load
+// Uses the RKRTL database on Hostinger (srv1822.hstgr.io)
+// Remote access already works for this DB — no SSL, no IP whitelist issues
 let pool = null;
 
 function getPool() {
   if (!pool) {
     pool = mysql.createPool({
-      host:             process.env.AUDIT_DB_HOST,
-      port:             parseInt(process.env.AUDIT_DB_PORT || '3306'),
-      user:             process.env.AUDIT_DB_USER,
-      password:         process.env.AUDIT_DB_PASSWORD,
-      database:         process.env.AUDIT_DB_NAME,
+      host:               process.env.AUDIT_DB_HOST     || 'srv1822.hstgr.io',
+      port:               parseInt(process.env.AUDIT_DB_PORT || '3306'),
+      user:               process.env.AUDIT_DB_USER     || 'u943038602_rkrtl',
+      password:           process.env.AUDIT_DB_PASSWORD || 'rkrtl@123',
+      database:           process.env.AUDIT_DB_NAME     || 'u943038602_rkrtl',
       waitForConnections: true,
-      connectionLimit:  5,
-      queueLimit:       0,
-      connectTimeout:   30000,
-      // NO ssl option — Hostinger shared MySQL rejects SSL from Render
+      connectionLimit:    5,
+      queueLimit:         0,
+      connectTimeout:     30000,
+      // No SSL — Hostinger shared MySQL does not support SSL from Render
     });
   }
   return pool;
@@ -27,12 +27,12 @@ async function query(sql, params = []) {
   return rows;
 }
 
-// ─── Test connection (called at startup, failure is non-fatal) ────────────────
+// ─── Test connection (called at startup, non-fatal) ───────────────────────────
 async function testConnection() {
   try {
     console.log('[AUDIT] Testing database connection...');
     await query('SELECT 1');
-    console.log('[AUDIT] ✅ Database connected successfully');
+    console.log('[AUDIT] ✅ Database connected successfully (u943038602_rkrtl)');
     return true;
   } catch (e) {
     console.error('[AUDIT] ✕ Database connection failed:', e.message);
@@ -52,7 +52,10 @@ async function createRun(triggeredBy = 'manual') {
 async function updateRun(runId, data) {
   const fields = Object.keys(data).map(k => `${k} = ?`).join(', ');
   const values = Object.values(data);
-  await getPool().execute(`UPDATE audit_runs SET ${fields} WHERE id = ?`, [...values, runId]);
+  await getPool().execute(
+    `UPDATE audit_runs SET ${fields} WHERE id = ?`,
+    [...values, runId]
+  );
 }
 
 async function savePage(runId, pageData) {
@@ -67,38 +70,40 @@ async function savePage(runId, pageData) {
   `, [
     runId,
     pageData.url,
-    pageData.status_code     || null,
-    pageData.redirect_url    || null,
-    pageData.redirect_chain  ? JSON.stringify(pageData.redirect_chain) : null,
-    pageData.content_type    || null,
-    pageData.page_size_bytes || 0,
-    pageData.load_time_ms    || 0,
-    pageData.title           || null,
-    pageData.meta_description|| null,
-    pageData.h1              || null,
-    pageData.canonical_url   || null,
-    pageData.word_count      || 0,
-    pageData.image_count     || 0,
-    pageData.internal_link_count  || 0,
-    pageData.external_link_count  || 0,
-    pageData.is_in_sitemap   ? 1 : 0,
-    pageData.is_indexable    ? 1 : 0,
-    pageData.robots_directive|| null,
-    pageData.schema_types    ? JSON.stringify(pageData.schema_types) : null,
-    pageData.og_title        || null,
-    pageData.og_description  || null,
-    pageData.og_image        || null,
+    pageData.status_code      || null,
+    pageData.redirect_url     || null,
+    pageData.redirect_chain   ? JSON.stringify(pageData.redirect_chain)  : null,
+    pageData.content_type     || null,
+    pageData.page_size_bytes  || 0,
+    pageData.load_time_ms     || 0,
+    pageData.title            || null,
+    pageData.meta_description || null,
+    pageData.h1               || null,
+    pageData.canonical_url    || null,
+    pageData.word_count       || 0,
+    pageData.image_count      || 0,
+    pageData.internal_link_count || 0,
+    pageData.external_link_count || 0,
+    pageData.is_in_sitemap    ? 1 : 0,
+    pageData.is_indexable     ? 1 : 0,
+    pageData.robots_directive || null,
+    pageData.schema_types     ? JSON.stringify(pageData.schema_types) : null,
+    pageData.og_title         || null,
+    pageData.og_description   || null,
+    pageData.og_image         || null,
   ]);
   return result.insertId;
 }
 
 async function saveIssue(runId, pageId, issue) {
   await getPool().execute(`
-    INSERT INTO audit_issues (run_id, page_id, category, severity, check_name, description, affected_url, extra_data)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO audit_issues (
+      run_id, page_id, category, severity, check_name,
+      description, affected_url, extra_data
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `, [
     runId,
-    pageId || null,
+    pageId           || null,
     issue.category,
     issue.severity,
     issue.check_name,
@@ -118,11 +123,18 @@ async function getRecentRuns(limit = 10) {
 }
 
 async function getRunIssues(runId) {
-  return query('SELECT * FROM audit_issues WHERE run_id = ? ORDER BY FIELD(severity,"critical","warning","info"), category', [runId]);
+  return query(
+    `SELECT * FROM audit_issues WHERE run_id = ?
+     ORDER BY FIELD(severity,'critical','warning','info'), category`,
+    [runId]
+  );
 }
 
 async function getRunPages(runId) {
-  return query('SELECT * FROM audit_pages WHERE run_id = ? ORDER BY url', [runId]);
+  return query(
+    'SELECT * FROM audit_pages WHERE run_id = ? ORDER BY url',
+    [runId]
+  );
 }
 
 async function getIssueSummary(runId) {
@@ -136,7 +148,9 @@ async function getIssueSummary(runId) {
 
 async function getPreviousRun(currentRunId) {
   const runs = await query(
-    'SELECT * FROM audit_runs WHERE id < ? AND status = "completed" ORDER BY id DESC LIMIT 1',
+    `SELECT * FROM audit_runs
+     WHERE id < ? AND status = "completed"
+     ORDER BY id DESC LIMIT 1`,
     [currentRunId]
   );
   return runs[0] || null;
@@ -145,5 +159,5 @@ async function getPreviousRun(currentRunId) {
 module.exports = {
   query, testConnection, createRun, updateRun, savePage, saveIssue,
   getRunWithStats, getRecentRuns, getRunIssues, getRunPages,
-  getIssueSummary, getPreviousRun
+  getIssueSummary, getPreviousRun,
 };
