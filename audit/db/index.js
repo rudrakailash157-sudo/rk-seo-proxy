@@ -29,13 +29,24 @@ async function query(sql, params = []) {
 
 // ─── Test connection (called at startup, non-fatal) ───────────────────────────
 async function testConnection() {
+  const cfg = {
+    host:     process.env.AUDIT_DB_HOST     || 'srv1822.hstgr.io',
+    port:     process.env.AUDIT_DB_PORT     || '3306',
+    user:     process.env.AUDIT_DB_USER     || 'u943038602_rkrtl',
+    database: process.env.AUDIT_DB_NAME     || 'u943038602_rkrtl',
+    // password intentionally not logged
+  };
+  console.log('[AUDIT] Testing DB connection — host:', cfg.host, '| port:', cfg.port, '| user:', cfg.user, '| db:', cfg.database);
   try {
-    console.log('[AUDIT] Testing database connection...');
     await query('SELECT 1');
-    console.log('[AUDIT] ✅ Database connected successfully (u943038602_rkrtl)');
+    console.log('[AUDIT] ✅ Database connected successfully');
     return true;
   } catch (e) {
-    console.error('[AUDIT] ✕ Database connection failed:', e.message);
+    console.error('[AUDIT] ✕ Database connection failed');
+    console.error('[AUDIT]   message :', e.message);
+    console.error('[AUDIT]   code    :', e.code);
+    console.error('[AUDIT]   errno   :', e.errno);
+    console.error('[AUDIT]   sqlState:', e.sqlState);
     console.error('[AUDIT] Running in no-DB mode — results will not be saved');
     return false;
   }
