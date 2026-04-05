@@ -6,7 +6,6 @@ const path = require('path');
 const AUDIT_PASSWORD = process.env.AUDIT_PASSWORD || 'rudrakailash2024';
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
 
-// ─── IN-MEMORY SESSIONS ───────────────────────────────────────────────────────
 const sessions = new Map();
 
 function createSession() {
@@ -26,7 +25,6 @@ function validateSession(id) {
 function requireAuth(req, res, next) {
   const sessionId = req.cookies?.audit_session;
   if (!validateSession(sessionId)) {
-    // For API routes return 401 JSON, not redirect
     if (req.path.startsWith('/api/')) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
@@ -35,7 +33,6 @@ function requireAuth(req, res, next) {
   next();
 }
 
-// ─── LOGIN PAGE ───────────────────────────────────────────────────────────────
 router.get('/login', (req, res) => {
   res.send(`<!DOCTYPE html>
 <html><head>
@@ -66,7 +63,7 @@ router.get('/login', (req, res) => {
   <div class="om">🕉️</div>
   <h1>RudraKailash Audit</h1>
   <p>Site Health Dashboard</p>
-  ${req.query.error ? '<div class="error">Incorrect password. Please try again.</div>' : ''}
+  \${req.query.error ? '<div class="error">Incorrect password. Please try again.</div>' : ''}
   <form method="POST" action="/audit/login">
     <input type="password" name="password" placeholder="Enter password" autofocus>
     <button type="submit">Enter Dashboard</button>
@@ -75,7 +72,6 @@ router.get('/login', (req, res) => {
 </body></html>`);
 });
 
-// ─── LOGIN POST ───────────────────────────────────────────────────────────────
 router.post('/login', (req, res) => {
   const { password } = req.body;
   if (!password || password.trim() !== AUDIT_PASSWORD.trim()) {
@@ -84,16 +80,12 @@ router.post('/login', (req, res) => {
   const sessionId = createSession();
   const expiresAt = new Date(Date.now() + SESSION_DURATION_MS);
   res.cookie('audit_session', sessionId, {
-    httpOnly: true,
-    secure: true,
-    sameSite: 'none',
-    expires: expiresAt,
-    path: '/'
+    httpOnly: true, secure: true, sameSite: 'none',
+    expires: expiresAt, path: '/'
   });
   res.redirect('/audit/dashboard');
 });
 
-// ─── LOGOUT ───────────────────────────────────────────────────────────────────
 router.get('/logout', (req, res) => {
   const sessionId = req.cookies?.audit_session;
   if (sessionId) sessions.delete(sessionId);
@@ -101,18 +93,31 @@ router.get('/logout', (req, res) => {
   res.redirect('/audit/login');
 });
 
-// ─── API ROUTES ───────────────────────────────────────────────────────────────
 router.get('/api/reset', requireAuth, (req, res) => {
   try {
-    const { resetAudit } = require('../engine');
-    resetAudit();
+    const { resetState } = require('../engine');
+    resetState();
     res.json({ success: true });
   } catch(e) { res.json({ success: false }); }
 });
 
+router.post('/api/stop', requireAuth, async (req, res) => {
+  try {
+    const { stopAudit } = require('../engine');
+    const result = await stopAudit();
+    res.json({ success: true, ...result });
+  } catch(e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 router.post('/api/start', requireAuth, async (req, res) => {
   try {
-    const { runAudit } = require('../engine');
+    const { runAudit, getStatus } = require('../engine');
+    const status = getStatus();
+    if (status.is_running) {
+      return res.status(400).json({ success: false, error: 'Audit already running' });
+    }
     runAudit('manual').catch(err => console.error('Audit error:', err));
     res.json({ success: true, message: 'Audit started' });
   } catch (err) {
@@ -171,7 +176,6 @@ router.get('/api/runs/:id/pages', requireAuth, async (req, res) => {
   } catch(e) { res.json([]); }
 });
 
-// ─── DASHBOARD ────────────────────────────────────────────────────────────────
 router.get('/dashboard', requireAuth, (req, res) => {
   res.sendFile('index.html', { root: path.join(__dirname, '../dashboard') });
 });
