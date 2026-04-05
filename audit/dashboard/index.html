@@ -68,6 +68,8 @@
   .btn-primary:hover { background: var(--maroon-light); }
   .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
   .btn-ghost { background: transparent; color: var(--text-muted); border: 1px solid var(--border); }
+  .btn-stop { background: #7B1C1C; color: #FCA5A5; border: 1px solid #DC2626; }
+  .btn-stop:hover { background: #991B1B; color: #FEE2E2; }
   .btn-ghost:hover { border-color: var(--gold); color: var(--gold); }
 
   .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
@@ -338,6 +340,7 @@
   </div>
   <div class="header-actions">
     <button class="btn btn-primary" id="runAuditBtn" onclick="startAudit()">▶ Run Audit Now</button>
+    <button class="btn btn-stop" id="stopAuditBtn" onclick="stopAudit()" style="display:none">⏹ Stop Audit</button>
     <a href="/audit/logout"><button class="btn btn-ghost">Logout</button></a>
   </div>
 </header>
@@ -706,16 +709,33 @@
   }
 
   function setRunning(running) {
-    const btn  = document.getElementById('runAuditBtn');
-    const btn2 = document.getElementById('startAuditBtn2');
+    const btn     = document.getElementById('runAuditBtn');
+    const btn2    = document.getElementById('startAuditBtn2');
+    const stopBtn = document.getElementById('stopAuditBtn');
     if (running) {
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner"></span> Running...';
-      if (btn2) { btn2.disabled = true; btn2.innerHTML = '<span class="spinner"></span> Running...'; }
+      if (btn2)    { btn2.disabled = true; btn2.innerHTML = '<span class="spinner"></span> Running...'; }
+      if (stopBtn) { stopBtn.style.display = 'inline-block'; }
     } else {
       btn.disabled = false;
       btn.innerHTML = '▶ Run Audit Now';
-      if (btn2) { btn2.disabled = false; btn2.innerHTML = '▶ Start New Audit'; }
+      if (btn2)    { btn2.disabled = false; btn2.innerHTML = '▶ Start New Audit'; }
+      if (stopBtn) { stopBtn.style.display = 'none'; }
+    }
+  }
+
+  async function stopAudit() {
+    if (!confirm('Stop the currently running audit? Pages crawled so far will be saved.')) return;
+    try {
+      await api('/api/stop', 'POST');
+      showToast('Audit stopped. Data collected so far has been saved.', 'warning');
+      setRunning(false);
+      document.getElementById('statusDot').className = 'status-dot idle';
+      document.getElementById('statusText').textContent = 'Ready';
+      setTimeout(() => loadRuns(), 2000);
+    } catch (e) {
+      showToast('Failed to stop audit: ' + e.message, 'error');
     }
   }
 
