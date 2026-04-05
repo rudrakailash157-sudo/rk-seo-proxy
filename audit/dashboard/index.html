@@ -33,7 +33,6 @@
     min-height: 100vh;
   }
 
-  /* HEADER */
   header {
     background: linear-gradient(135deg, #0D0500 0%, var(--maroon) 50%, #0D0500 100%);
     border-bottom: 2px solid var(--gold);
@@ -55,7 +54,6 @@
 
   .header-actions { display: flex; align-items: center; gap: 12px; }
 
-  /* BUTTONS */
   .btn {
     padding: 8px 20px;
     border-radius: 6px;
@@ -72,10 +70,8 @@
   .btn-ghost { background: transparent; color: var(--text-muted); border: 1px solid var(--border); }
   .btn-ghost:hover { border-color: var(--gold); color: var(--gold); }
 
-  /* LAYOUT */
   .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
 
-  /* STATUS BAR */
   #status-bar {
     background: rgba(212,160,23,0.08);
     border: 1px solid var(--border);
@@ -93,7 +89,6 @@
   .status-dot.running { background: var(--gold); animation: pulse 1s infinite; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
 
-  /* RUN SELECTOR */
   .run-selector {
     display: flex;
     align-items: center;
@@ -116,7 +111,6 @@
   select:focus { outline: none; border-color: var(--gold); }
   option { background: #1A0A00; }
 
-  /* STAT CARDS */
   .stat-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -140,7 +134,6 @@
   .stat-card.total .num { color: var(--gold); }
   .stat-card.pages .num { color: #A78BFA; }
 
-  /* TABS */
   .tabs {
     display: flex;
     gap: 4px;
@@ -164,7 +157,6 @@
   .tab:hover { color: var(--gold); }
   .tab.active { color: var(--gold); border-bottom-color: var(--gold); }
 
-  /* CATEGORY OVERVIEW */
   .category-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
@@ -191,7 +183,6 @@
   .cat-bar { height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; overflow: hidden; }
   .cat-bar-fill { height: 100%; border-radius: 2px; background: linear-gradient(90deg, var(--maroon), var(--gold)); transition: width 0.6s ease; }
 
-  /* ISSUES TABLE */
   .issues-controls {
     display: flex;
     gap: 12px;
@@ -213,7 +204,6 @@
   }
   .search-box::placeholder { color: var(--text-muted); }
   .search-box:focus { outline: none; border-color: var(--gold); }
-
   .issues-count { color: var(--text-muted); font-size: 13px; margin-left: auto; }
 
   table { width: 100%; border-collapse: collapse; font-size: 14px; }
@@ -253,11 +243,8 @@
   .url-cell { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .url-cell a { color: var(--gold-light); text-decoration: none; font-size: 12px; }
   .url-cell a:hover { text-decoration: underline; }
-
   .desc-cell { max-width: 400px; color: var(--cream); }
-  .check-name { font-family: monospace; font-size: 12px; color: var(--text-muted); display: block; margin-top: 2px; }
 
-  /* PAGES TAB */
   .pages-table td { font-size: 13px; }
   .status-chip {
     display: inline-block;
@@ -273,7 +260,6 @@
   .s5xx { background: rgba(220,38,38,0.3); color: #F87171; }
   .s0 { background: rgba(107,114,128,0.2); color: #9CA3AF; }
 
-  /* PROGRESS LOG */
   #progress-log {
     background: rgba(0,0,0,0.4);
     border: 1px solid var(--border);
@@ -287,7 +273,6 @@
     line-height: 1.8;
   }
 
-  /* EMPTY STATE */
   .empty-state {
     text-align: center;
     padding: 60px 20px;
@@ -296,7 +281,6 @@
   .empty-state .icon { font-size: 48px; margin-bottom: 12px; }
   .empty-state p { font-size: 16px; }
 
-  /* PAGINATION */
   .pagination { display: flex; gap: 8px; justify-content: center; margin-top: 20px; }
   .page-btn {
     padding: 6px 14px;
@@ -311,7 +295,6 @@
   .page-btn:hover, .page-btn.active { border-color: var(--gold); color: var(--gold); }
   .page-btn:disabled { opacity: 0.3; cursor: not-allowed; }
 
-  /* RESPONSIVE */
   @media (max-width: 768px) {
     .container { padding: 16px; }
     .stat-grid { grid-template-columns: repeat(2, 1fr); }
@@ -319,7 +302,6 @@
     td:nth-child(n+4) { display: none; }
   }
 
-  /* LOADER */
   .spinner {
     display: inline-block;
     width: 16px; height: 16px;
@@ -361,13 +343,11 @@
 
 <div class="container">
 
-  <!-- Status Bar -->
   <div id="status-bar">
     <div class="status-dot idle" id="statusDot"></div>
     <span id="statusText">Ready — select a run below or start a new audit</span>
   </div>
 
-  <!-- Run Selector -->
   <div class="run-selector">
     <label>Audit Run:</label>
     <select id="runSelect" onchange="loadRun(this.value)">
@@ -376,7 +356,6 @@
     <span id="runMeta" style="color:var(--text-muted);font-size:13px;"></span>
   </div>
 
-  <!-- Stat Cards -->
   <div class="stat-grid">
     <div class="stat-card total"><div class="num" id="statTotal">—</div><div class="lbl">Total Issues</div></div>
     <div class="stat-card critical"><div class="num" id="statCritical">—</div><div class="lbl">Critical</div></div>
@@ -385,22 +364,19 @@
     <div class="stat-card pages"><div class="num" id="statPages">—</div><div class="lbl">Pages Crawled</div></div>
   </div>
 
-  <!-- Tabs -->
   <div class="tabs">
-    <button class="tab active" onclick="switchTab('overview')">📊 Overview</button>
-    <button class="tab" onclick="switchTab('issues')">⚠️ Issues</button>
-    <button class="tab" onclick="switchTab('pages')">📄 Pages</button>
-    <button class="tab" onclick="switchTab('progress')">📡 Live Log</button>
+    <button class="tab active" onclick="switchTab('overview', event)">📊 Overview</button>
+    <button class="tab" onclick="switchTab('issues', event)">⚠️ Issues</button>
+    <button class="tab" onclick="switchTab('pages', event)">📄 Pages</button>
+    <button class="tab" onclick="switchTab('progress', event)">📡 Live Log</button>
   </div>
 
-  <!-- TAB: OVERVIEW -->
   <div id="tab-overview" class="tab-content">
     <div class="category-grid" id="categoryGrid">
       <div class="empty-state"><div class="icon">📊</div><p>Select or run an audit to see results</p></div>
     </div>
   </div>
 
-  <!-- TAB: ISSUES -->
   <div id="tab-issues" class="tab-content" style="display:none">
     <div class="issues-controls">
       <select id="filterCategory" onchange="filterIssues()">
@@ -443,7 +419,6 @@
     <div class="pagination" id="issuesPagination"></div>
   </div>
 
-  <!-- TAB: PAGES -->
   <div id="tab-pages" class="tab-content" style="display:none">
     <div class="issues-controls">
       <input type="text" class="search-box" id="pagesSearch" placeholder="Filter by URL..." oninput="renderPagesTable()">
@@ -477,7 +452,6 @@
     <div class="pagination" id="pagesPagination"></div>
   </div>
 
-  <!-- TAB: LIVE LOG -->
   <div id="tab-progress" class="tab-content" style="display:none">
     <p class="section-title">Live Crawl Progress</p>
     <div id="progress-log">Waiting for audit to start...</div>
@@ -497,6 +471,7 @@
   let pagesPage = 1;
   const PAGE_SIZE = 50;
   let statusInterval = null;
+  let lastCompletedRunId = null;
 
   const CATEGORY_LABELS = {
     links_urls: '🔗 Links & URLs',
@@ -510,22 +485,25 @@
     structured_data: '🗺️ Structured Data'
   };
 
-  // ── INIT ──────────────────────────────────────────────────────
   async function init() {
     await loadRuns();
     startStatusPolling();
   }
 
   async function loadRuns() {
-    const runs = await api('/api/runs');
+    const runs = await api('/api/runs').catch(() => []);
     const sel = document.getElementById('runSelect');
+    const prev = sel.value;
     sel.innerHTML = '<option value="">— Select a run —</option>';
     runs.forEach(r => {
       const d = new Date(r.started_at).toLocaleString('en-IN');
       const statusIcon = r.status === 'completed' ? '✅' : r.status === 'running' ? '🔄' : '❌';
-      sel.innerHTML += `<option value="${r.id}">${statusIcon} Run #${r.id} — ${d} (${r.total_issues || 0} issues)</option>`;
+      // ── FIXED: use issues_found (matches schema column name) ──
+      sel.innerHTML += `<option value="${r.id}">${statusIcon} Run #${r.id} — ${d} (${r.issues_found || 0} issues)</option>`;
     });
-    if (runs.length > 0) {
+    if (prev) {
+      sel.value = prev;
+    } else if (runs.length > 0) {
       sel.value = runs[0].id;
       loadRun(runs[0].id);
     }
@@ -535,24 +513,28 @@
     if (!runId) return;
     currentRunId = runId;
 
-    const run = await api(`/api/runs/${runId}`);
-    const d = new Date(run.started_at).toLocaleString('en-IN');
-    document.getElementById('runMeta').textContent =
-      `${run.status} · Started ${d} · ${run.total_pages} pages`;
+    const run = await api(`/api/runs/${runId}`).catch(() => null);
+    if (!run) return;
 
-    document.getElementById('statTotal').textContent = run.total_issues || 0;
-    document.getElementById('statCritical').textContent = run.critical_issues || 0;
-    document.getElementById('statWarning').textContent = run.warning_issues || 0;
-    document.getElementById('statInfo').textContent = run.info_issues || 0;
-    document.getElementById('statPages').textContent = run.total_pages || 0;
+    const d = new Date(run.started_at).toLocaleString('en-IN');
+
+    // ── FIXED: use pages_crawled (matches schema column name) ──
+    document.getElementById('runMeta').textContent =
+      `${run.status} · Started ${d} · ${run.pages_crawled || 0} pages`;
+
+    // ── FIXED: use issues_found, critical_count, warning_count, info_count, pages_crawled ──
+    document.getElementById('statTotal').textContent    = run.issues_found   || 0;
+    document.getElementById('statCritical').textContent = run.critical_count || 0;
+    document.getElementById('statWarning').textContent  = run.warning_count  || 0;
+    document.getElementById('statInfo').textContent     = run.info_count     || 0;
+    document.getElementById('statPages').textContent    = run.pages_crawled  || 0;
 
     await Promise.all([loadSummary(runId), loadIssues(runId), loadPages(runId)]);
   }
 
   async function loadSummary(runId) {
-    const summary = await api(`/api/runs/${runId}/summary`);
+    const summary = await api(`/api/runs/${runId}/summary`).catch(() => []);
     const totals = {};
-    const maxIssues = {};
 
     summary.forEach(row => {
       if (!totals[row.category]) totals[row.category] = { critical: 0, warning: 0, info: 0 };
@@ -576,8 +558,8 @@
           <span class="cat-name">${CATEGORY_LABELS[cat] || cat}</span>
           <div class="cat-badges">
             ${counts.critical ? `<span class="badge critical">${counts.critical}</span>` : ''}
-            ${counts.warning ? `<span class="badge warning">${counts.warning}</span>` : ''}
-            ${counts.info ? `<span class="badge info">${counts.info}</span>` : ''}
+            ${counts.warning  ? `<span class="badge warning">${counts.warning}</span>`   : ''}
+            ${counts.info     ? `<span class="badge info">${counts.info}</span>`         : ''}
           </div>
         </div>
         <div class="cat-bar"><div class="cat-bar-fill" style="width:${pct}%"></div></div>
@@ -588,18 +570,17 @@
   async function loadIssues(runId) {
     const cat = document.getElementById('filterCategory').value;
     const sev = document.getElementById('filterSeverity').value;
-    allIssues = await api(`/api/runs/${runId}/issues?category=${cat}&severity=${sev}`);
+    allIssues = await api(`/api/runs/${runId}/issues?category=${cat}&severity=${sev}`).catch(() => []);
     issuesPage = 1;
     renderIssuesTable();
   }
 
   async function loadPages(runId) {
-    allPages = await api(`/api/runs/${runId}/pages`);
+    allPages = await api(`/api/runs/${runId}/pages`).catch(() => []);
     pagesPage = 1;
     renderPagesTable();
   }
 
-  // ── FILTERS ───────────────────────────────────────────────────
   function filterByCat(cat) {
     document.getElementById('filterCategory').value = cat;
     document.getElementById('filterSeverity').value = '';
@@ -611,7 +592,6 @@
     if (currentRunId) await loadIssues(currentRunId);
   }
 
-  // ── RENDER ISSUES TABLE ───────────────────────────────────────
   function renderIssuesTable() {
     const search = document.getElementById('searchBox').value.toLowerCase();
     const filtered = allIssues.filter(i =>
@@ -635,12 +615,12 @@
         <tr>
           <td><span class="severity-pill ${i.severity}">${i.severity}</span></td>
           <td style="color:var(--text-muted);font-size:13px;">${CATEGORY_LABELS[i.category] || i.category}</td>
-          <td>
-            <span style="font-family:monospace;font-size:12px;color:var(--gold-light);">${i.check_name}</span>
-          </td>
+          <td><span style="font-family:monospace;font-size:12px;color:var(--gold-light);">${escHtml(i.check_name)}</span></td>
           <td class="desc-cell">${escHtml(i.description)}</td>
           <td class="url-cell">
-            ${i.affected_url ? `<a href="${escHtml(i.affected_url)}" target="_blank" title="${escHtml(i.affected_url)}">${escHtml(truncate(i.affected_url, 50))}</a>` : '—'}
+            ${i.affected_url
+              ? `<a href="${escHtml(i.affected_url)}" target="_blank" title="${escHtml(i.affected_url)}">${escHtml(truncate(i.affected_url, 50))}</a>`
+              : '—'}
           </td>
         </tr>`).join('');
     }
@@ -648,7 +628,6 @@
     renderPagination('issuesPagination', totalPages, issuesPage, p => { issuesPage = p; renderIssuesTable(); });
   }
 
-  // ── RENDER PAGES TABLE ────────────────────────────────────────
   function renderPagesTable() {
     const search = document.getElementById('pagesSearch').value.toLowerCase();
     const statusFilter = document.getElementById('pagesStatusFilter').value;
@@ -690,7 +669,6 @@
     renderPagination('pagesPagination', totalPages, pagesPage, p => { pagesPage = p; renderPagesTable(); });
   }
 
-  // ── PAGINATION ────────────────────────────────────────────────
   function renderPagination(containerId, totalPages, currentPage, onPageChange) {
     const container = document.getElementById(containerId);
     if (totalPages <= 1) { container.innerHTML = ''; return; }
@@ -704,12 +682,12 @@
     container.innerHTML = html;
   }
 
-  // ── AUDIT CONTROL ─────────────────────────────────────────────
   async function startAudit() {
     const btn = document.getElementById('runAuditBtn');
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span> Starting...';
     switchTab('progress');
+    document.getElementById('progress-log').innerHTML = 'Starting audit...';
     try {
       await api('/api/start', 'POST');
       document.getElementById('statusText').textContent = 'Audit running...';
@@ -721,15 +699,14 @@
     }
   }
 
-  // ── STATUS POLLING ────────────────────────────────────────────
   function startStatusPolling() {
     statusInterval = setInterval(async () => {
       const status = await api('/api/status').catch(() => null);
       if (!status) return;
 
-      const dot = document.getElementById('statusDot');
+      const dot  = document.getElementById('statusDot');
       const text = document.getElementById('statusText');
-      const btn = document.getElementById('runAuditBtn');
+      const btn  = document.getElementById('runAuditBtn');
 
       if (status.is_running) {
         dot.className = 'status-dot running';
@@ -737,9 +714,8 @@
         btn.disabled = true;
         btn.innerHTML = '<span class="spinner"></span> Running...';
 
-        // Update progress log
-        const log = document.getElementById('progress-log');
         if (status.progress?.length > 0) {
+          const log = document.getElementById('progress-log');
           log.innerHTML = status.progress.map(p =>
             `<div><span style="color:var(--text-muted)">${p.time.split('T')[1].split('.')[0]}</span> ${escHtml(p.msg)}</div>`
           ).join('');
@@ -751,31 +727,34 @@
         btn.disabled = false;
         btn.innerHTML = '▶ Run Audit Now';
 
-        // Reload runs if a run just completed
-        if (status.current_run_id && status.current_run_id !== currentRunId) {
+        // Reload runs list when a new run just completed
+        if (status.current_run_id && status.current_run_id !== lastCompletedRunId) {
+          lastCompletedRunId = status.current_run_id;
           await loadRuns();
+          // Auto-select the completed run
+          document.getElementById('runSelect').value = status.current_run_id;
+          loadRun(status.current_run_id);
         }
       }
     }, 3000);
   }
 
-  // ── TABS ──────────────────────────────────────────────────────
-  function switchTab(name) {
+  function switchTab(name, evt) {
     document.querySelectorAll('.tab-content').forEach(t => t.style.display = 'none');
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.getElementById('tab-' + name).style.display = 'block';
-    event?.target?.classList.add('active');
-    if (!event?.target) {
+    if (evt?.target) {
+      evt.target.classList.add('active');
+    } else {
       document.querySelectorAll('.tab').forEach(t => {
-        if (t.getAttribute('onclick')?.includes(name)) t.classList.add('active');
+        if (t.getAttribute('onclick')?.includes(`'${name}'`)) t.classList.add('active');
       });
     }
   }
 
-  // ── UTILS ─────────────────────────────────────────────────────
   async function api(path, method = 'GET') {
     const res = await fetch('/audit' + path, { method, credentials: 'include' });
-    if (res.status === 401) { window.location.href = '/audit/login'; return; }
+    if (res.status === 401) { window.location.href = '/audit/login'; return {}; }
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   }
