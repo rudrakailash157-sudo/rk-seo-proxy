@@ -3,6 +3,11 @@ const router = express.Router();
 const crypto = require('crypto');
 const path = require('path');
 
+// Require engine ONCE at module load — ensures all routes share the same
+// isRunning flag and state. Never require inside individual handlers.
+const engine = require('../engine');
+const db     = require('../db');
+
 const AUDIT_PASSWORD = process.env.AUDIT_PASSWORD || 'rudrakailash2024';
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
 
@@ -95,16 +100,14 @@ router.get('/logout', (req, res) => {
 
 router.get('/api/reset', requireAuth, (req, res) => {
   try {
-    const { resetState } = require('../engine');
-    resetState();
+    engine.resetState();
     res.json({ success: true });
   } catch(e) { res.json({ success: false }); }
 });
 
 router.post('/api/stop', requireAuth, async (req, res) => {
   try {
-    const { stopAudit } = require('../engine');
-    const result = await stopAudit();
+    const result = await engine.stopAudit();
     res.json({ success: true, ...result });
   } catch(e) {
     res.status(500).json({ success: false, error: e.message });
@@ -113,12 +116,11 @@ router.post('/api/stop', requireAuth, async (req, res) => {
 
 router.post('/api/start', requireAuth, async (req, res) => {
   try {
-    const { runAudit, getStatus } = require('../engine');
-    const status = getStatus();
+    const status = engine.getStatus();
     if (status.is_running) {
       return res.status(400).json({ success: false, error: 'Audit already running' });
     }
-    runAudit('manual').catch(err => console.error('Audit error:', err));
+    engine.runAudit('manual').catch(err => console.error('Audit error:', err));
     res.json({ success: true, message: 'Audit started' });
   } catch (err) {
     res.status(400).json({ success: false, error: err.message });
@@ -127,8 +129,7 @@ router.post('/api/start', requireAuth, async (req, res) => {
 
 router.get('/api/status', requireAuth, (req, res) => {
   try {
-    const { getStatus } = require('../engine');
-    res.json(getStatus());
+    res.json(engine.getStatus());
   } catch(e) {
     res.json({ is_running: false, current_run_id: null, progress: [] });
   }
@@ -136,7 +137,6 @@ router.get('/api/status', requireAuth, (req, res) => {
 
 router.get('/api/runs', requireAuth, async (req, res) => {
   try {
-    const db = require('../db');
     const runs = await db.getRecentRuns(20);
     res.json(runs);
   } catch(e) { res.json([]); }
@@ -144,7 +144,6 @@ router.get('/api/runs', requireAuth, async (req, res) => {
 
 router.get('/api/runs/:id', requireAuth, async (req, res) => {
   try {
-    const db = require('../db');
     const run = await db.getRunWithStats(req.params.id);
     if (!run) return res.status(404).json({ error: 'Run not found' });
     res.json(run);
@@ -153,7 +152,6 @@ router.get('/api/runs/:id', requireAuth, async (req, res) => {
 
 router.get('/api/runs/:id/issues', requireAuth, async (req, res) => {
   try {
-    const db = require('../db');
     const { category, severity } = req.query;
     const issues = await db.getRunIssues(req.params.id, { category, severity });
     res.json(issues);
@@ -162,7 +160,6 @@ router.get('/api/runs/:id/issues', requireAuth, async (req, res) => {
 
 router.get('/api/runs/:id/summary', requireAuth, async (req, res) => {
   try {
-    const db = require('../db');
     const summary = await db.getIssueSummary(req.params.id);
     res.json(summary);
   } catch(e) { res.json([]); }
@@ -170,7 +167,6 @@ router.get('/api/runs/:id/summary', requireAuth, async (req, res) => {
 
 router.get('/api/runs/:id/pages', requireAuth, async (req, res) => {
   try {
-    const db = require('../db');
     const pages = await db.getRunPages(req.params.id);
     res.json(pages);
   } catch(e) { res.json([]); }
