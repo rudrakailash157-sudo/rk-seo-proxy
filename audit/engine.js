@@ -145,4 +145,32 @@ function resetState() {
   progressLog  = [];
 }
 
-module.exports = { runAudit, getStatus, resetState };
+// Stop a running audit gracefully — saves what's been collected so far
+async function stopAudit() {
+  if (!isRunning) return { stopped: false, message: 'No audit running' };
+  const runId = currentRunId;
+  isRunning = false;  // signal crawl loop to stop
+  addProgress('⏹ Audit stopped manually');
+  if (runId) {
+    try {
+      const db = require('./db');
+      const pages  = await db.query('SELECT COUNT(*) as c FROM audit_pages  WHERE run_id = ?', [runId]);
+      const issues = await db.query('SELECT COUNT(*) as c FROM audit_issues WHERE run_id = ?', [runId]);
+      const critical = await db.query('SELECT COUNT(*) as c FROM audit_issues WHERE run_id = ? AND severity = "critical"', [runId]);
+      const warning  = await db.query('SELECT COUNT(*) as c FROM audit_issues WHERE run_id = ? AND severity = "warning"',  [runId]);
+      const info     = await db.query('SELECT COUNT(*) as c FROM audit_issues WHERE run_id = ? AND severity = "info"',     [runId]);
+      await db.updateRun(runId, {
+        status:         'stopped',
+        completed_at:   new Date(),
+        pages_crawled:  pages[0].c,
+        issues_found:   issues[0].c,
+        critical_count: critical[0].c,
+        warning_count:  warning[0].c,
+        info_count:     info[0].c,
+      });
+    } catch(e) { console.warn('[AUDIT] stopAudit DB update failed:', e.message); }
+  }
+  return { stopped: true, runId };
+}
+
+module.exports = { runAudit, getStatus, resetState, stopAudit };
