@@ -10,7 +10,7 @@ const REQUEST_TIMEOUT = 15000;
 
 const axiosInstance = axios.create({
   timeout: REQUEST_TIMEOUT,
-  maxRedirects: 0, // handle redirects manually
+  maxRedirects: 0,
   validateStatus: () => true,
   headers: {
     'User-Agent': 'RudraKailash-SiteAudit/1.0 (+https://www.rudrakailash.com)',
@@ -76,7 +76,6 @@ async function fetchSitemapUrls() {
       if (res.status !== 200) continue;
       const parsed = await xml2js.parseStringPromise(res.data, { explicitArray: false });
 
-      // Handle sitemap index
       if (parsed.sitemapindex?.sitemap) {
         const sitemaps = Array.isArray(parsed.sitemapindex.sitemap)
           ? parsed.sitemapindex.sitemap
@@ -95,7 +94,6 @@ async function fetchSitemapUrls() {
         }
       }
 
-      // Handle urlset directly
       if (parsed.urlset?.url) {
         const urlList = Array.isArray(parsed.urlset.url)
           ? parsed.urlset.url
@@ -137,7 +135,6 @@ function extractPageData(url, fetchResult, sitemapUrls) {
     links: []
   };
 
-  // Check X-Robots-Tag header
   const xRobots = headers?.['x-robots-tag'];
   if (xRobots) {
     pageData.robots_directive = xRobots;
@@ -148,29 +145,25 @@ function extractPageData(url, fetchResult, sitemapUrls) {
 
   const $ = cheerio.load(data);
 
-  // Meta robots
   const metaRobots = $('meta[name="robots"]').attr('content') || '';
   if (metaRobots) {
     pageData.robots_directive = metaRobots;
     if (metaRobots.includes('noindex')) pageData.is_indexable = false;
   }
 
-  pageData.title = $('title').first().text().trim() || null;
+  pageData.title            = $('title').first().text().trim() || null;
   pageData.meta_description = $('meta[name="description"]').attr('content')?.trim() || null;
-  pageData.h1 = $('h1').first().text().trim() || null;
-  pageData.canonical_url = $('link[rel="canonical"]').attr('href') || null;
-  pageData.og_title = $('meta[property="og:title"]').attr('content') || null;
-  pageData.og_description = $('meta[property="og:description"]').attr('content') || null;
-  pageData.og_image = $('meta[property="og:image"]').attr('content') || null;
+  pageData.h1               = $('h1').first().text().trim() || null;
+  pageData.canonical_url    = $('link[rel="canonical"]').attr('href') || null;
+  pageData.og_title         = $('meta[property="og:title"]').attr('content') || null;
+  pageData.og_description   = $('meta[property="og:description"]').attr('content') || null;
+  pageData.og_image         = $('meta[property="og:image"]').attr('content') || null;
 
-  // Word count
   const bodyText = $('body').text().replace(/\s+/g, ' ').trim();
   pageData.word_count = bodyText ? bodyText.split(' ').filter(w => w.length > 0).length : 0;
 
-  // Images
   pageData.image_count = $('img').length;
 
-  // Schema types
   const schemas = [];
   $('script[type="application/ld+json"]').each((_, el) => {
     try {
@@ -181,7 +174,6 @@ function extractPageData(url, fetchResult, sitemapUrls) {
   });
   if (schemas.length > 0) pageData.schema_types = schemas;
 
-  // Links
   const links = [];
   $('a[href]').each((_, el) => {
     const href = $(el).attr('href');
@@ -199,29 +191,35 @@ function extractPageData(url, fetchResult, sitemapUrls) {
   return pageData;
 }
 
-async function crawl(onPageCrawled, onProgress) {
+// shouldStop is an optional callback — () => boolean
+// If it returns true, the crawl exits cleanly after the current page
+async function crawl(onPageCrawled, onProgress, shouldStop) {
   const sitemapUrls = await fetchSitemapUrls();
   onProgress?.(`Found ${sitemapUrls.size} URLs in sitemap`);
 
-  const visited = new Set();
-  const queue = [BASE_URL, ...sitemapUrls];
+  const visited     = new Set();
+  const queue       = [BASE_URL, ...sitemapUrls];
   const allPageData = [];
 
-  // Deduplicate queue
   const uniqueQueue = [...new Set(queue)].slice(0, MAX_PAGES);
 
   for (let i = 0; i < uniqueQueue.length; i++) {
     const url = uniqueQueue[i];
     if (visited.has(url)) continue;
-    visited.add(url);
 
+    // ── Stop signal check — exits cleanly after finishing current page ────────
+    if (shouldStop?.()) {
+      onProgress?.(`⏹ Crawl stopped at page ${i} of ${uniqueQueue.length}`);
+      break;
+    }
+
+    visited.add(url);
     onProgress?.(`Crawling ${i + 1}/${uniqueQueue.length}: ${url}`);
 
     const fetchResult = await fetchWithRedirects(url);
-    const pageData = extractPageData(url, fetchResult, sitemapUrls);
+    const pageData    = extractPageData(url, fetchResult, sitemapUrls);
     allPageData.push(pageData);
 
-    // Add newly discovered internal links to queue
     if (pageData.links && uniqueQueue.length < MAX_PAGES) {
       for (const link of pageData.links) {
         if (link.is_internal && !visited.has(link.href) && !uniqueQueue.includes(link.href)) {
