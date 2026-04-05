@@ -64,11 +64,11 @@ async function runAudit(triggeredBy = 'manual') {
           pages.push({ ...pageData });
         }
 
-        // ── FIXED: use correct column name 'pages_crawled' ──────────────────
         await db.updateRun(runId, { pages_crawled: totalPages }).catch(() => {});
         addProgress(`[${totalPages}] ${pageData.status_code} ${pageData.url}`);
       },
-      (msg) => addProgress(msg)
+      (msg) => addProgress(msg),
+      () => !isRunning   // ← shouldStop: returns true when stop is requested
     );
 
     addProgress(`Crawl complete — ${totalPages} pages. Running checks...`);
@@ -149,25 +149,18 @@ function resetState() {
 async function stopAudit() {
   if (!isRunning) return { stopped: false, message: 'No audit running' };
   const runId = currentRunId;
-  isRunning = false;  // signal crawl loop to stop
-  addProgress('⏹ Audit stopped manually');
+  addProgress('⏹ Stop requested — finishing current page then stopping...');
+  isRunning = false;  // signals crawl loop to exit after current page
+
+  // Update DB immediately so status shows 'stopped' right away
   if (runId) {
     try {
-      const db = require('./db');
-      const pages  = await db.query('SELECT COUNT(*) as c FROM audit_pages  WHERE run_id = ?', [runId]);
-      const issues = await db.query('SELECT COUNT(*) as c FROM audit_issues WHERE run_id = ?', [runId]);
-      const critical = await db.query('SELECT COUNT(*) as c FROM audit_issues WHERE run_id = ? AND severity = "critical"', [runId]);
-      const warning  = await db.query('SELECT COUNT(*) as c FROM audit_issues WHERE run_id = ? AND severity = "warning"',  [runId]);
-      const info     = await db.query('SELECT COUNT(*) as c FROM audit_issues WHERE run_id = ? AND severity = "info"',     [runId]);
       await db.updateRun(runId, {
-        status:         'stopped',
-        completed_at:   new Date(),
-        pages_crawled:  pages[0].c,
-        issues_found:   issues[0].c,
-        critical_count: critical[0].c,
-        warning_count:  warning[0].c,
-        info_count:     info[0].c,
+        status:       'stopped',
+        completed_at: new Date(),
+        error_message: 'Stopped manually by user',
       });
+      addProgress(`⏹ Run #${runId} marked as stopped in database`);
     } catch(e) { console.warn('[AUDIT] stopAudit DB update failed:', e.message); }
   }
   return { stopped: true, runId };
