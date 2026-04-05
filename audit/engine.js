@@ -133,9 +133,9 @@ async function runAudit(triggeredBy = 'manual') {
 
 function getStatus() {
   return {
-    isRunning,
-    currentRunId,
-    progressLog: progressLog.slice(-100),
+    is_running:      isRunning,
+    current_run_id:  currentRunId,
+    progress:        progressLog.slice(-100),
   };
 }
 
