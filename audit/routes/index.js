@@ -68,7 +68,7 @@ router.get('/login', (req, res) => {
   <div class="om">🕉️</div>
   <h1>RudraKailash Audit</h1>
   <p>Site Health Dashboard</p>
-  \${req.query.error ? '<div class="error">Incorrect password. Please try again.</div>' : ''}
+  ${req.query.error ? '<div class="error">Incorrect password. Please try again.</div>' : ''}
   <form method="POST" action="/audit/login">
     <input type="password" name="password" placeholder="Enter password" autofocus>
     <button type="submit">Enter Dashboard</button>
