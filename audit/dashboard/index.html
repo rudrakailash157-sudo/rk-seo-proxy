@@ -312,6 +312,7 @@
     vertical-align: middle;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes fadeIn { from { opacity:0; transform:translateX(-50%) translateY(8px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
 
   .section-title {
     font-family: 'Cinzel', serif;
@@ -456,7 +457,7 @@
     <p class="section-title">Live Crawl Progress</p>
     <div id="progress-log">Waiting for audit to start...</div>
     <div style="margin-top:12px;display:flex;gap:12px;">
-      <button class="btn btn-primary" onclick="startAudit()">▶ Start New Audit</button>
+      <button class="btn btn-primary" id="startAuditBtn2" onclick="startAudit()">▶ Start New Audit</button>
       <button class="btn btn-ghost" onclick="clearLog()">Clear Log</button>
     </div>
   </div>
@@ -683,9 +684,15 @@
   }
 
   async function startAudit() {
-    const btn = document.getElementById('runAuditBtn');
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner"></span> Starting...';
+    // Guard — don't start if already running
+    const status = await api('/api/status').catch(() => null);
+    if (status?.is_running) {
+      showToast('⚠️ An audit is already running. Please wait for it to complete.', 'warning');
+      return;
+    }
+    const btn  = document.getElementById('runAuditBtn');
+    const btn2 = document.getElementById('startAuditBtn2');
+    setRunning(true);
     switchTab('progress');
     document.getElementById('progress-log').innerHTML = 'Starting audit...';
     try {
@@ -693,10 +700,41 @@
       document.getElementById('statusText').textContent = 'Audit running...';
       document.getElementById('statusDot').className = 'status-dot running';
     } catch (e) {
-      alert('Failed to start audit: ' + e.message);
+      showToast('Failed to start audit: ' + e.message, 'error');
+      setRunning(false);
+    }
+  }
+
+  function setRunning(running) {
+    const btn  = document.getElementById('runAuditBtn');
+    const btn2 = document.getElementById('startAuditBtn2');
+    if (running) {
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Running...';
+      if (btn2) { btn2.disabled = true; btn2.innerHTML = '<span class="spinner"></span> Running...'; }
+    } else {
       btn.disabled = false;
       btn.innerHTML = '▶ Run Audit Now';
+      if (btn2) { btn2.disabled = false; btn2.innerHTML = '▶ Start New Audit'; }
     }
+  }
+
+  function showToast(msg, type = 'info') {
+    const existing = document.getElementById('toast');
+    if (existing) existing.remove();
+    const t = document.createElement('div');
+    t.id = 'toast';
+    const bg = type === 'warning' ? '#92400E' : type === 'error' ? '#7B1C1C' : '#1e3a5f';
+    const border = type === 'warning' ? '#D97706' : type === 'error' ? '#DC2626' : '#2563EB';
+    t.style.cssText = `position:fixed;bottom:28px;left:50%;transform:translateX(-50%);
+      background:${bg};border:1px solid ${border};color:#FDE68A;
+      padding:14px 24px;border-radius:10px;font-size:14px;z-index:9999;
+      box-shadow:0 4px 20px rgba(0,0,0,0.5);max-width:480px;text-align:center;
+      animation:fadeIn 0.2s ease;`;
+    t.innerHTML = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.style.opacity = '0', 3500);
+    setTimeout(() => t.remove(), 3800);
   }
 
   function startStatusPolling() {
@@ -711,8 +749,7 @@
       if (status.is_running) {
         dot.className = 'status-dot running';
         text.textContent = `Audit running (Run #${status.current_run_id})...`;
-        btn.disabled = true;
-        btn.innerHTML = '<span class="spinner"></span> Running...';
+        setRunning(true);
 
         if (status.progress?.length > 0) {
           const log = document.getElementById('progress-log');
@@ -724,8 +761,7 @@
       } else {
         dot.className = 'status-dot idle';
         text.textContent = 'Ready';
-        btn.disabled = false;
-        btn.innerHTML = '▶ Run Audit Now';
+        setRunning(false);
 
         // Reload runs list when a new run just completed
         if (status.current_run_id && status.current_run_id !== lastCompletedRunId) {
