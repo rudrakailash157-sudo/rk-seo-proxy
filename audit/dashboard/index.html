@@ -491,6 +491,14 @@
 
   async function init() {
     await loadRuns();
+    // Check status immediately on load — don't wait 3s for first poll
+    const status = await api('/api/status').catch(() => null);
+    if (status?.is_running) {
+      setRunning(true);
+      document.getElementById('statusDot').className = 'status-dot running';
+      document.getElementById('statusText').textContent = `Audit running (Run #${status.current_run_id})...`;
+      switchTab('progress');
+    }
     startStatusPolling();
   }
 
@@ -783,13 +791,13 @@
         text.textContent = 'Ready';
         setRunning(false);
 
-        // Reload runs list when a new run just completed
+        // Reload runs list when a run just completed or stopped
         if (status.current_run_id && status.current_run_id !== lastCompletedRunId) {
           lastCompletedRunId = status.current_run_id;
           await loadRuns();
-          // Auto-select the completed run
           document.getElementById('runSelect').value = status.current_run_id;
           loadRun(status.current_run_id);
+          showToast(`✅ Audit #${status.current_run_id} complete — results loaded`, 'info');
         }
       }
     }, 3000);
