@@ -105,7 +105,10 @@ const transporter = nodemailer.createTransport({
   auth: { user: process.env.EMAIL_SMTP_USER, pass: process.env.EMAIL_SMTP_PASS },
 });
 
-async function sendEmail(subject, htmlBody) {
+// ─── Serve SEO tool ───────────────────────────────────────────────────────────
+app.get("/seo", (req, res) => {
+  res.sendFile(path.join(__dirname, "rk-seo-v8.html"));
+});
   try {
     await transporter.sendMail({
       from: `"RudraKailash SEO Agent" <${process.env.EMAIL_FROM}>`,
