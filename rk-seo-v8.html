@@ -538,23 +538,19 @@ let generatedFAQs = [];
 // Physical products (malas, bracelets, beads, kavach) must NOT be flagged
 function isServiceProduct(product) {
   if (!product) return false;
-  const title = (product.title || "").toLowerCase().trim();
-  // Only match if title STARTS WITH or clearly IS a service type
-  // These are the exact service keywords that only appear in service product titles
-  const strictServicePatterns = [
-    /homa/,        // "Ganapathi Homa", "Vastu Homa" etc
-    /homam/,       // "Ganapathi Homam"
-    /puja/,        // "Lakshmi Puja", "Hanuman Puja"
-    /pooja/,       // alternate spelling
-    /parayanam/,   // "Sundara Kanda Parayanam"
-    /parayana/,    // "Vishnu Sahasranama Parayana"
-    /abhishek/,    // "Rudra Abhishek" (service, not bead)
-    /yagna/,       // fire ritual
-    /yajna/,       // fire ritual alternate
-    /archana/,     // temple ritual
+  const title = " " + (product.title || "").toLowerCase().trim() + " ";
+  // Service keywords — checked with spaces around them to avoid partial matches
+  // e.g. " homa " matches "Ganapathi Homa" but not "Mahalakshmi"
+  const serviceWords = [
+    " homa ", " homam ", " puja ", " pooja ",
+    " parayanam ", " parayana ", " abhishek ",
+    " yagna ", " yajna ", " archana ",
   ];
-  // Check title only — body text is unreliable (beads can mention rituals)
-  return strictServicePatterns.some(pattern => pattern.test(title));
+  // Also check if title ENDS with these (e.g. "Lakshmi Puja")
+  const titleRaw = (product.title || "").toLowerCase().trim();
+  const endsWithService = serviceWords.some(w => titleRaw.endsWith(w.trim()));
+  const containsService = serviceWords.some(w => title.includes(w));
+  return containsService || endsWithService;
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
