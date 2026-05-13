@@ -730,9 +730,7 @@ function setConnected(connected) {
 
 // Opens /auth/install directly — works even when token already exists (just refreshes)
 function connectShopify() {
-  window.open(PROXY_URL + "/auth/install", "_blank");
-  // Re-check after OAuth flow completes (~5s)
-  setTimeout(() => checkConnectionWithRetry(3, 2000), 5000);
+  window.location.href = PROXY_URL + "/auth/install";
 }
 
 // ─── Products ─────────────────────────────────────────────────────────────────
@@ -1971,5 +1969,9 @@ function jumpToProduct(productId) {
   // Switch to SEO tab and pre-select the product
   switchTab("seo");
   const sel = document.getElementById("productSelect");
-  if (sel) {
-    sel.value = produ
+ if (sel) {
+    sel.value = productId;
+    onProductChange();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+}
