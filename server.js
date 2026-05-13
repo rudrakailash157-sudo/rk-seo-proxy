@@ -496,6 +496,24 @@ cron.schedule("30 1 * * 1", async () => {
   console.log("📊 Weekly rank report sent.");
 }, { timezone: "UTC" });
 
+// ─── Service product detection ────────────────────────────────────────────────
+// Returns true for homa, puja, parayanam and other Vedic service products
+// These get a different SEO prompt — no RKRTL/bead language
+function isServiceProduct(product) {
+  const title = (product.title || "").toLowerCase();
+  const tags  = (product.tags  || "").toLowerCase();
+  const body  = (product.body_html || "").toLowerCase().slice(0, 300);
+  const serviceKeywords = [
+    "homa", "homam", "puja", "pooja", "parayanam", "parayana",
+    "abhishek", "archana", "yagna", "yajna", "ritual", "fire ritual",
+    "vedic fire", "online puja", "online homa", "rudra abhishek",
+    "sundara kanda", "vishnu sahasranama", "kanda parayanam",
+  ];
+  return serviceKeywords.some(kw =>
+    title.includes(kw) || tags.includes(kw) || body.includes(kw)
+  );
+}
+
 // ─── SEO Pipeline ─────────────────────────────────────────────────────────────
 function cleanAIOutput(text) {
   return text.replace(/^```(?:html)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
@@ -513,16 +531,17 @@ async function callClaude(system, user, max_tokens = 1200) {
   return cleanAIOutput(data.content?.map(b => b.text || "").join("") || "");
 }
 
-function scoreSEO(metaTitle, metaDesc, tags, desc) {
+function scoreSEO(metaTitle, metaDesc, tags, desc, isService = false) {
   const titleLen = (metaTitle||"").length, descLen = (metaDesc||"").length;
   const tagCount = (tags||"").split(",").filter(Boolean).length;
   const descText = (desc||"").replace(/<[^>]+>/g, "");
   const checks = [
     titleLen>0, titleLen>=40&&titleLen<=60, /(rudrakailash)/i.test(metaTitle||""),
-    descLen>0, descLen>=130&&descLen<=155, /shop|buy|order|get|explore/i.test(metaDesc||""),
-    tagCount>0, tagCount>=6, /rkrtl|certified|authentic/i.test(tags||""),
+    descLen>0, descLen>=130&&descLen<=155, /shop|buy|order|get|explore|book/i.test(metaDesc||""),
+    tagCount>0, tagCount>=6,
+    isService ? /vedic|puja|homa|vadhyar|mvs/i.test(tags||"") : /rkrtl|certified|authentic/i.test(tags||""),
     descText.length>100, descText.split(/\s+/).length>=300, /<h[23]/i.test(desc||""),
-    /rkrtl|certified|x-ray/i.test(descText),
+    isService ? /mvs|vedapadasala|vadhyar|kanchi/i.test(descText) : /rkrtl|certified|x-ray/i.test(descText),
   ];
   const pts = [10,10,5,10,10,5,5,8,7,10,10,5,5];
   return Math.round(checks.reduce((s,c,i) => s+(c?pts[i]:0), 0) / pts.reduce((s,p) => s+p, 0) * 100);
@@ -530,6 +549,8 @@ function scoreSEO(metaTitle, metaDesc, tags, desc) {
 
 async function runSEOPipeline(product) {
   console.log(`🤖 SEO pipeline: ${product.title}`);
+  const isService  = isServiceProduct(product);
+  if (isService) console.log(`🛕 Detected as SERVICE product — using service prompt`);
   const descPlain   = (product.body_html||"").replace(/<[^>]+>/g,"").slice(0,400);
   const competitors = await runCompetitorResearch(product.title);
   const compSummary = competitors.length > 0
@@ -591,15 +612,33 @@ async function runSEOPipeline(product) {
     ? `MANDATORY KEYWORD PLACEMENT:\n${keywordBrief}\n\nPLACEMENT RULES:\n- <h2>: Must contain one of the H1 PRIMARY KEYWORDS\n- Opening <p>: Naturally include the primary H1 keyword within first 60 words\n- <h3> headings: Use H2/H3 SUB-TOPIC KEYWORDS as heading phrases where they fit\n- Bullets: Address LONG-TAIL INTENT PHRASES as seeker experience\n- FAQ: Word at least 2 questions using the exact phrasing of LONG-TAIL INTENT phrases`
     : `KEYWORD GUIDANCE: Use standard Rudraksha SEO keywords appropriate to this product.`;
 
+  // ── Build description prompt — branch on product type ──────────────────────
+  const descSystem = isService
+    ? `You are a Vedic services SEO expert writing concise service page descriptions for RudraKailash.com. Rules: (1) SEO — keyword in first <h2> and opening <p>; (2) E-E-A-T — cite vadhyar credentials, MVS Vedapadasala, Kanchi Mutt VRNT achievement; (3) NO Rudraksha bead language, NO RKRTL certification, NO X-ray testing references — this is a SERVICE not a product. Output clean HTML only. No markdown. No preamble.`
+    : `You are a Rudraksha SEO expert writing concise, scannable product descriptions for RudraKailash.com. Rules: (1) SEO — keyword in first <h2>, keyword in first <p> within 100 words, 1–2% density, LSI keywords in every <h3>, no stuffing; (2) E-E-A-T — experience framing ("seekers describe…"), Vedic scripture citations, Elaeocarpus ganitrus botanical name, RKRTL as independent lab, zero direct health/benefit claims; (3) Feb 2026 Google Discover — original perspective, depth, clear non-clickbait headings, Indian audience. LENGTH RULE: Each section MAX 4 lines of prose. If a section needs more than 4 lines, use a <ul> bullet list instead of a paragraph. Keep total description under 600 words. Output clean HTML only. No markdown. No preamble.`;
+
+  const descUser = isService
+    ? `Write a concise SEO service description for "${product.title}" offered by RudraKailash.com.\n\nMAIN KEYWORD: ${product.title}\n\nSERVICE CONTEXT:\n- Performed by: MVS Vedapadasala vadhyars, Coimbatore (Ghana Parayana trained)\n- Vadhyars Bhadrinath, Akshai Jayaraman, Harish secured 1st place in VRNT examination by Kanchi Mutt\n- Delivered online — customer books, vadhyars perform, video/photo documentation sent\n- Authentic traditional setting — real padashaala, not studio\n\nSTRUCTURE:\n<h2>${product.title} — Online Vedic Service by MVS Vedapadasala</h2>\n<p>[2–3 sentences: what this service is, who performs it, spiritual purpose]</p>\n<h3>Vedic Significance of ${product.title}</h3>\n[MAX 4 lines: scriptural basis, deity invoked, spiritual purpose]\n<h3>What You Receive — Complete Service Inclusions</h3>\n<ul>[4–5 bullets: performance by trained vadhyars, video/photo documentation, personalised sankalpa, date flexibility, prasad dispatch if applicable]</ul>\n<h3>Performed by MVS Vedapadasala — Authentic Coimbatore Vadhyars</h3>\n[2–3 lines: Ghana Parayana training, Kanchi Mutt VRNT 1st place, real padashaala environment]\n<h3>Who Should Book ${product.title}</h3>\n<ul>[4–5 bullets: ideal devotee profiles — "Those seeking…", "Families facing…"]</ul>\n<h3>How to Book Your ${product.title}</h3>\n<ul>[4 bullets: step-by-step — select date, provide sankalpa details, vadhyars perform, receive documentation]</ul>\n<h3>Frequently Asked Questions About ${product.title}</h3>\n<dl>[4 FAQs: how the online service works, vadhyar credentials, what is delivered, booking customisation]</dl>\n\n${kwPlacementInstructions}\n\nCONTENT GAPS TO COVER: ${gapSummary}\nCURRENT DESCRIPTION (for reference): ${descPlain}\n\nOUTPUT: Clean HTML only, starting with <h2>. Service content only — no bead/certification language.`
+    : `Write a concise SEO product description for "${product.title}" on RudraKailash.com.\n\nMAIN KEYWORD: ${product.title}\n${isHalfMoon ? `SPECIAL NOTE — 1 Mukhi Half Moon: This is a South Indian Rudraksha (not Nepali). The round 1 Mukhi Nepali bead is virtually non-existent today. The Half Moon form from South India is the authentic, scripturally valid form of 1 Mukhi available. Present this positively — it IS the genuine option.\n` : ""}\nSTRUCTURE:\n<h2>${product.title} — Authentic RKRTL-Certified Rudraksha Bead</h2>\n<p>[2–3 sentences: keyword in first sentence, origin, seeker hook]</p>\n<h3>Spiritual Significance of ${product.title} in Vedic Tradition</h3>\n[MAX 4 lines or <ul>: ruling deity, scripture, mantra, planet]\n<h3>What Seekers Describe About ${product.title}</h3>\n<ul>[4–5 bullets: "Seekers report…" — NO direct claims]</ul>\n<h3>RKRTL Certification — Verified Authentic ${product.title}</h3>\n[2–3 lines: X-ray imaging + microscopy, Elaeocarpus ganitrus confirmed, certificate issued — do NOT include any verify/certificate links]\n<h3>Who Should Buy ${product.title} — Ideal Seekers</h3>\n<ul>[4–5 bullets: seeker profiles]</ul>\n<h3>How to Wear Your ${product.title} — Day, Mantra and Method</h3>\n<ul>[4–5 bullets: day to begin, thread/metal, mantra, energisation steps]</ul>\n<h3>Frequently Asked Questions About ${product.title}</h3>\n<dl>[4 FAQs in <dt><strong>1. Question</strong></dt><dd>Answer</dd> format]</dl>\n\n${kwPlacementInstructions}\n\nCONTENT GAPS TO COVER: ${gapSummary}\nCURRENT DESCRIPTION (for reference only): ${descPlain}\n\nOUTPUT: Clean HTML only, starting with <h2>.`;
+
+  // ── Meta prompts — also branch on service vs product ───────────────────────
+  const metaTitleUser = isService
+    ? `Write a meta title for "${product.title}" service on RudraKailash.com. Max 60 chars. Include service keyword + "RudraKailash". Do NOT mention RKRTL or certification.`
+    : `Write a meta title for "${product.title}" on RudraKailash.com. Max 60 chars. Include main keyword + brand name "RudraKailash".`;
+
+  const metaDescUser = isService
+    ? `Write a meta description for "${product.title}" service on RudraKailash.com. 145–155 characters. Mention MVS Vedapadasala vadhyars, authentic Vedic tradition, and include a booking CTA. Do NOT mention RKRTL.`
+    : `Write a meta description for "${product.title}" on RudraKailash.com. 145–155 characters. Mention RKRTL certified and include a call to action.`;
+
+  const tagsUser = isService
+    ? `Generate 10–12 Shopify product tags for the "${product.title}" service on RudraKailash.com. Current tags: "${product.tags||"none"}". Include: online puja, vedic service, MVS Vedapadasala, homa/puja type, coimbatore vadhyar, authentic vedic ritual, book online.`
+    : `Generate 10–12 Shopify product tags for "${product.title}". Current tags: "${product.tags||"none"}". Include mukhi number variants, rudraksha, RKRTL, certified, authentic, and relevant spiritual keywords.`;
+
   const [description, metaTitle, metaDesc, tags] = await Promise.allSettled([
-    callClaude(
-      `You are a Rudraksha SEO expert writing concise, scannable product descriptions for RudraKailash.com. Rules: (1) SEO — keyword in first <h2>, keyword in first <p> within 100 words, 1–2% density, LSI keywords in every <h3>, no stuffing; (2) E-E-A-T — experience framing ("seekers describe…"), Vedic scripture citations, Elaeocarpus ganitrus botanical name, RKRTL as independent lab, zero direct health/benefit claims; (3) Feb 2026 Google Discover — original perspective, depth, clear non-clickbait headings, Indian audience. LENGTH RULE: Each section MAX 4 lines of prose. If a section needs more than 4 lines, use a <ul> bullet list instead of a paragraph. Keep total description under 600 words. Output clean HTML only. No markdown. No preamble.`,
-      `Write a concise SEO product description for "${product.title}" on RudraKailash.com.\n\nMAIN KEYWORD: ${product.title}\n${isHalfMoon ? `SPECIAL NOTE — 1 Mukhi Half Moon: This is a South Indian Rudraksha (not Nepali). The round 1 Mukhi Nepali bead is virtually non-existent today. The Half Moon form from South India is the authentic, scripturally valid form of 1 Mukhi available. Present this positively — it IS the genuine option.\n` : ""}\nSTRUCTURE:\n<h2>${product.title} — Authentic RKRTL-Certified Rudraksha Bead</h2>\n<p>[2–3 sentences: keyword in first sentence, origin, seeker hook]</p>\n<h3>Spiritual Significance of ${product.title} in Vedic Tradition</h3>\n[MAX 4 lines or <ul>: ruling deity, scripture, mantra, planet]\n<h3>What Seekers Describe About ${product.title}</h3>\n<ul>[4–5 bullets: "Seekers report…" — NO direct claims]</ul>\n<h3>RKRTL Certification — Verified Authentic ${product.title}</h3>\n[2–3 lines: X-ray imaging + microscopy, Elaeocarpus ganitrus confirmed, certificate issued — do NOT include any verify/certificate links]\n<h3>Who Should Buy ${product.title} — Ideal Seekers</h3>\n<ul>[4–5 bullets: seeker profiles]</ul>\n<h3>How to Wear Your ${product.title} — Day, Mantra and Method</h3>\n<ul>[4–5 bullets: day to begin, thread/metal, mantra, energisation steps]</ul>\n<h3>Frequently Asked Questions About ${product.title}</h3>\n<dl>[4 FAQs in <dt><strong>1. Question</strong></dt><dd>Answer</dd> format]</dl>\n\n${kwPlacementInstructions}\n\nCONTENT GAPS TO COVER: ${gapSummary}\nCURRENT DESCRIPTION (for reference only): ${descPlain}\n\nOUTPUT: Clean HTML only, starting with <h2>.`,
-      4000
-    ),
-    callClaude(`SEO specialist. Output ONLY the meta title text. No quotes. No explanation.`, `Write a meta title for "${product.title}" on RudraKailash.com. Max 60 chars. Include main keyword + brand name "RudraKailash".`),
-    callClaude(`SEO specialist. Output ONLY the meta description text. No quotes. No explanation.`, `Write a meta description for "${product.title}" on RudraKailash.com. 145–155 characters. Mention RKRTL certified and include a call to action.`),
-    callClaude(`Shopify SEO expert. Output ONLY comma-separated tags. No explanation.`, `Generate 10–12 Shopify product tags for "${product.title}". Current tags: "${product.tags||"none"}". Include mukhi number variants, rudraksha, RKRTL, certified, authentic, and relevant spiritual keywords.`),
+    callClaude(descSystem, descUser, 4000),
+    callClaude(`SEO specialist. Output ONLY the meta title text. No quotes. No explanation.`, metaTitleUser),
+    callClaude(`SEO specialist. Output ONLY the meta description text. No quotes. No explanation.`, metaDescUser),
+    callClaude(`Shopify SEO expert. Output ONLY comma-separated tags. No explanation.`, tagsUser),
   ]);
 
   const result = {
@@ -620,8 +659,8 @@ async function runSEOPipeline(product) {
     console.log(`📊 Auto-registered for rank tracking: ${product.title}`);
   }
 
-  const scoreBefore = scoreSEO(product.metafields_global_title_tag, product.metafields_global_description_tag, product.tags, product.body_html);
-  const scoreAfter  = scoreSEO(result.metaTitle, result.metaDesc, result.tags, result.description);
+  const scoreBefore = scoreSEO(product.metafields_global_title_tag, product.metafields_global_description_tag, product.tags, product.body_html, isService);
+  const scoreAfter  = scoreSEO(result.metaTitle, result.metaDesc, result.tags, result.description, isService);
   console.log(`✅ ${product.title}: ${scoreBefore} → ${scoreAfter}`);
   return { ...result, scoreBefore, scoreAfter };
 }
@@ -820,3 +859,5 @@ app.listen(PORT, async () => {
   console.log(`   Audit Module:  ${auditModule ? "✅ Loaded" : "⚠️  Not loaded"}`);
   if (storedAccessToken) await registerWebhooks();
 });
+// NOTE: The following functions should be inserted into server.js
+// BEFORE the runSEOPipeline function
