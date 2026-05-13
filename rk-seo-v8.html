@@ -534,18 +534,27 @@ let rankChart = null, rankDataCache = {}, keywordsCache = {};
 let generatedFAQs = [];
 
 // ─── Service product detection ────────────────────────────────────────────────
+// STRICT: title-only matching with exact service keywords
+// Physical products (malas, bracelets, beads, kavach) must NOT be flagged
 function isServiceProduct(product) {
   if (!product) return false;
-  const title = (product.title || "").toLowerCase();
-  const tags  = (product.tags  || "").toLowerCase();
-  const body  = (product.body_html || "").toLowerCase().slice(0, 300);
-  const serviceKeywords = [
-    "homa","homam","puja","pooja","parayanam","parayana",
-    "abhishek","archana","yagna","yajna","ritual","fire ritual",
-    "vedic fire","online puja","online homa","rudra abhishek",
-    "sundara kanda","vishnu sahasranama","kanda parayanam",
+  const title = (product.title || "").toLowerCase().trim();
+  // Only match if title STARTS WITH or clearly IS a service type
+  // These are the exact service keywords that only appear in service product titles
+  const strictServicePatterns = [
+    /homa/,        // "Ganapathi Homa", "Vastu Homa" etc
+    /homam/,       // "Ganapathi Homam"
+    /puja/,        // "Lakshmi Puja", "Hanuman Puja"
+    /pooja/,       // alternate spelling
+    /parayanam/,   // "Sundara Kanda Parayanam"
+    /parayana/,    // "Vishnu Sahasranama Parayana"
+    /abhishek/,    // "Rudra Abhishek" (service, not bead)
+    /yagna/,       // fire ritual
+    /yajna/,       // fire ritual alternate
+    /archana/,     // temple ritual
   ];
-  return serviceKeywords.some(kw => title.includes(kw) || tags.includes(kw) || body.includes(kw));
+  // Check title only — body text is unreliable (beads can mention rituals)
+  return strictServicePatterns.some(pattern => pattern.test(title));
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
