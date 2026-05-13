@@ -2,6 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&display=swap" rel="stylesheet">
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>RudraKailash Agentic SEO v8</title>
 <style>
@@ -202,30 +204,30 @@
 
 <div class="header">
   <div class="header-logo">
-    <div class="logo-icon">馃敱</div>
+    <div class="logo-icon" style="font-size:16px;font-weight:bold;color:var(--gold-lt);">RK</div>
     <div class="logo-text">
       <h1>RUDRAKAILASH AGENTIC SEO</h1>
-      <p>Competitor Gap 路 Serper AI 路 E-E-A-T 路 Schema 路 SGE 路 Rank Tracker</p>
+      <p>Competitor Gap · Serper AI · E-E-A-T · Schema · SGE · Rank Tracker</p>
     </div>
   </div>
   <div class="header-actions">
     <span id="connectionStatus" class="text-muted"><span class="status-dot" id="statusDot"></span>Not connected</span>
     <button class="btn btn-secondary btn-sm" onclick="connectShopify()" id="connectBtn">Connect</button>
-    <button class="btn btn-secondary btn-sm" onclick="loadProducts()" id="refreshBtn" style="display:none">鈫?Refresh</button>
+    <button class="btn btn-secondary btn-sm" onclick="loadProducts()" id="refreshBtn" style="display:none">↻ Refresh</button>
   </div>
 </div>
 
 <div class="tabs">
-  <div class="tab active" onclick="switchTab('seo')"      id="tab-seo">鈿?SEO OPTIMISER</div>
-  <div class="tab"        onclick="switchTab('rank')"     id="tab-rank">馃搳 RANK TRACKER</div>
-  <div class="tab"        onclick="switchTab('cann')"     id="tab-cann">馃攳 CANNIBALIZATION</div>
-  <div class="tab"        onclick="switchTab('priority')" id="tab-priority">馃幆 PRIORITISE</div>
-  <div class="tab"        onclick="switchTab('options')"  id="tab-options">鈽?OPTIONS</div>
+  <div class="tab active" onclick="switchTab('seo')"      id="tab-seo">SEO OPTIMISER</div>
+  <div class="tab"        onclick="switchTab('rank')"     id="tab-rank">RANK TRACKER</div>
+  <div class="tab"        onclick="switchTab('cann')"     id="tab-cann">CANNIBALIZATION</div>
+  <div class="tab"        onclick="switchTab('priority')" id="tab-priority">PRIORITISE</div>
+  <div class="tab"        onclick="switchTab('options')"  id="tab-options">OPTIONS</div>
 </div>
 
 <div id="pane-seo" class="main">
   <div id="connectPrompt" class="connect-panel">
-    <div style="font-size:48px;margin-bottom:16px">馃敱</div>
+    <div style="font-size:48px;margin-bottom:16px;color:var(--gold-lt);font-weight:bold;">RK</div>
     <h2>RudraKailash SEO Agent</h2>
     <p>Connect your Shopify store to begin AI-powered SEO optimisation with competitor gap analysis, JSON-LD schema, SGE citation scoring, and rank tracking.</p>
     <button class="btn btn-primary" onclick="connectShopify()">Connect Shopify Store</button>
@@ -236,24 +238,24 @@
       <div class="card-title">Select Product</div>
       <div class="product-row">
         <select class="product-select" id="productSelect" onchange="onProductChange()" style="flex:1">
-          <option value="">鈥?Loading products鈥?鈥?/option>
+          <option value="">— Loading products… —</option>
         </select>
         <span id="thinBadge" class="thin-badge" style="display:none"></span>
-        <span id="serviceBadge" class="service-badge hidden">馃洉 Service</span>
-        <button class="btn btn-primary" onclick="runAllAgents()" id="runBtn" disabled>鈻?Run AI SEO Agents</button>
+        <span id="serviceBadge" class="service-badge hidden">🛕 Service</span>
+        <button class="btn btn-primary" onclick="runAllAgents()" id="runBtn" disabled>▶ Run AI SEO Agents</button>
       </div>
-      <div id="thinWarning" class="alert alert-warn mt-8 hidden">鈿?Thin content detected 鈥?this product has a very short or missing description.</div>
+      <div id="thinWarning" class="alert alert-warn mt-8 hidden">⚠ Thin content detected — this product has a very short or missing description.</div>
     </div>
 
     <div class="card hidden" id="compSection">
       <div class="flex-between">
-        <div class="card-title" style="margin:0">馃攳 Competitor Research 鈥?Top Ranking Pages</div>
+        <div class="card-title" style="margin:0">🔍 Competitor Research — Top Ranking Pages</div>
         <span class="text-muted" id="compCount"></span>
       </div>
       <div id="compList" class="mt-8"></div>
       <div id="kwSection" class="hidden mt-8">
         <div class="flex-between" style="margin-bottom:8px">
-          <div class="card-title" style="margin:0">馃幆 Keywords Extracted from Competitors</div>
+          <div class="card-title" style="margin:0">🎯 Keywords Extracted from Competitors</div>
           <div style="display:flex;gap:0">
             <span class="kw-legend"><span class="kw-tag-h1" style="padding:1px 6px;font-size:10px">H1</span> Primary</span>
             <span class="kw-legend"><span class="kw-tag-h2h3" style="padding:1px 6px;font-size:10px">H2/H3</span> Sub-topics</span>
@@ -269,17 +271,17 @@
     </div>
 
     <div class="card hidden" id="scoreSection">
-      <div class="card-title">SEO Score 鈥?Before vs After</div>
+      <div class="card-title">SEO Score — Before vs After</div>
       <div class="score-display">
         <div>
           <div class="score-label">BEFORE</div>
-          <div class="score-num" id="scoreBefore">鈥?/div>
+          <div class="score-num" id="scoreBefore">—</div>
           <div id="scoreBeforeBar" class="progress-bar" style="width:120px"><div class="progress-fill" style="background:var(--red);width:0%"></div></div>
         </div>
-        <div class="score-arrow">鈫?/div>
+        <div class="score-arrow">→</div>
         <div>
           <div class="score-label">AFTER</div>
-          <div class="score-num" id="scoreAfter">鈥?/div>
+          <div class="score-num" id="scoreAfter">—</div>
           <div id="scoreAfterBar" class="progress-bar" style="width:120px"><div class="progress-fill" style="background:var(--green);width:0%"></div></div>
         </div>
         <div>
@@ -288,52 +290,52 @@
         </div>
         <div class="sge-score-wrap hidden" id="sgeScoreWrap">
           <div class="score-label">SGE CITATION SCORE</div>
-          <div class="sge-score-num" id="sgeScoreNum">鈥?/div>
+          <div class="sge-score-num" id="sgeScoreNum">—</div>
           <div class="sge-score-label">AI ANSWER READINESS</div>
         </div>
       </div>
       <div class="agent-grid" id="agentGrid">
-        <div class="agent-card" id="agent-research"><div class="agent-icon">馃攳</div><div class="agent-name">COMPETITOR RESEARCH</div><div class="agent-status text-muted">Waiting鈥?/div></div>
-        <div class="agent-card" id="agent-keywords"><div class="agent-icon">馃幆</div><div class="agent-name">KEYWORD EXTRACTION</div><div class="agent-status text-muted">Waiting鈥?/div></div>
-        <div class="agent-card" id="agent-gaps"><div class="agent-icon">馃搳</div><div class="agent-name">GAP ANALYSIS</div><div class="agent-status text-muted">Waiting鈥?/div></div>
-        <div class="agent-card" id="agent-desc"><div class="agent-icon">鉁嶏笍</div><div class="agent-name">DESCRIPTION</div><div class="agent-status text-muted">Waiting鈥?/div></div>
-        <div class="agent-card" id="agent-title"><div class="agent-icon">馃彿锔?/div><div class="agent-name">META TITLE</div><div class="agent-status text-muted">Waiting鈥?/div></div>
-        <div class="agent-card" id="agent-metadesc"><div class="agent-icon">馃摑</div><div class="agent-name">META DESCRIPTION</div><div class="agent-status text-muted">Waiting鈥?/div></div>
-        <div class="agent-card" id="agent-tags"><div class="agent-icon">馃敄</div><div class="agent-name">TAGS</div><div class="agent-status text-muted">Waiting鈥?/div></div>
-        <div class="agent-card" id="agent-faq"><div class="agent-icon">馃帣锔?/div><div class="agent-name">FAQ / VOICE</div><div class="agent-status text-muted">Waiting鈥?/div></div>
-        <div class="agent-card" id="agent-schema"><div class="agent-icon">馃К</div><div class="agent-name">JSON-LD SCHEMA</div><div class="agent-status text-muted">Waiting鈥?/div></div>
+        <div class="agent-card" id="agent-research"><div class="agent-icon">🔍</div><div class="agent-name">COMPETITOR RESEARCH</div><div class="agent-status text-muted">Waiting…</div></div>
+        <div class="agent-card" id="agent-keywords"><div class="agent-icon">🎯</div><div class="agent-name">KEYWORD EXTRACTION</div><div class="agent-status text-muted">Waiting…</div></div>
+        <div class="agent-card" id="agent-gaps"><div class="agent-icon">📊</div><div class="agent-name">GAP ANALYSIS</div><div class="agent-status text-muted">Waiting…</div></div>
+        <div class="agent-card" id="agent-desc"><div class="agent-icon">✍️</div><div class="agent-name">DESCRIPTION</div><div class="agent-status text-muted">Waiting…</div></div>
+        <div class="agent-card" id="agent-title"><div class="agent-icon">🏷️</div><div class="agent-name">META TITLE</div><div class="agent-status text-muted">Waiting…</div></div>
+        <div class="agent-card" id="agent-metadesc"><div class="agent-icon">📝</div><div class="agent-name">META DESCRIPTION</div><div class="agent-status text-muted">Waiting…</div></div>
+        <div class="agent-card" id="agent-tags"><div class="agent-icon">🔖</div><div class="agent-name">TAGS</div><div class="agent-status text-muted">Waiting…</div></div>
+        <div class="agent-card" id="agent-faq"><div class="agent-icon">🎙️</div><div class="agent-name">FAQ / VOICE</div><div class="agent-status text-muted">Waiting…</div></div>
+        <div class="agent-card" id="agent-schema"><div class="agent-icon">🧬</div><div class="agent-name">JSON-LD SCHEMA</div><div class="agent-status text-muted">Waiting…</div></div>
       </div>
     </div>
 
     <div id="resultsSection" class="hidden">
       <div class="card">
-        <div class="card-title">馃彿 Meta Title</div>
+        <div class="card-title">🏷 Meta Title</div>
         <div class="content-section">
           <div class="section-label">CURRENT <span class="section-tag tag-current">existing</span></div>
-          <div class="content-box" id="currentMetaTitle">鈥?/div>
+          <div class="content-box" id="currentMetaTitle">—</div>
         </div>
         <div class="content-section">
           <div class="section-label">AI SUGGESTION <span class="section-tag tag-new">optimised</span></div>
           <textarea class="content-box editable" id="newMetaTitle" rows="2" oninput="updateCharCount('newMetaTitle','metaTitleCount')"></textarea>
-          <div class="char-count"><span id="metaTitleCount">0</span> characters (ideal: 40鈥?0)</div>
+          <div class="char-count"><span id="metaTitleCount">0</span> characters (ideal: 40–60)</div>
         </div>
       </div>
 
       <div class="card">
-        <div class="card-title">馃摑 Meta Description</div>
+        <div class="card-title">📝 Meta Description</div>
         <div class="content-section">
           <div class="section-label">CURRENT <span class="section-tag tag-current">existing</span></div>
-          <div class="content-box" id="currentMetaDesc">鈥?/div>
+          <div class="content-box" id="currentMetaDesc">—</div>
         </div>
         <div class="content-section">
           <div class="section-label">AI SUGGESTION <span class="section-tag tag-new">optimised</span></div>
           <textarea class="content-box editable" id="newMetaDesc" rows="3" oninput="updateCharCount('newMetaDesc','metaDescCount')"></textarea>
-          <div class="char-count"><span id="metaDescCount">0</span> characters (ideal: 145鈥?55)</div>
+          <div class="char-count"><span id="metaDescCount">0</span> characters (ideal: 145–155)</div>
         </div>
       </div>
 
       <div class="card">
-        <div class="card-title">馃敄 Product Tags</div>
+        <div class="card-title">🔖 Product Tags</div>
         <div class="content-section">
           <div class="section-label">CURRENT <span class="section-tag tag-current">existing</span></div>
           <div class="tags-wrap" id="currentTags"></div>
@@ -346,27 +348,27 @@
       </div>
 
       <div class="card">
-        <div class="card-title">馃搫 Product Description</div>
-        <div class="alert alert-info" id="eeAtBadge">鉁?E-E-A-T compliant 路 Feb 2026 Google update</div>
+        <div class="card-title">📄 Product Description</div>
+        <div class="alert alert-info" id="eeAtBadge">✦ E-E-A-T compliant · Feb 2026 Google update</div>
         <div class="content-section">
-          <div class="section-label">AI REWRITTEN 鈥?RENDERED PREVIEW <span class="section-tag tag-new">optimised</span></div>
+          <div class="section-label">AI REWRITTEN — RENDERED PREVIEW <span class="section-tag tag-new">optimised</span></div>
           <div class="desc-preview" id="descPreview"></div>
           <textarea class="content-box editable mt-8" id="newDesc" rows="10" style="display:none"></textarea>
           <div class="flex mt-8" style="gap:8px">
-            <button class="btn btn-secondary btn-sm" onclick="toggleDescEdit()">鉁?Edit HTML</button>
-            <button class="btn btn-secondary btn-sm" onclick="toggleDescPreview()">馃憗 Preview</button>
+            <button class="btn btn-secondary btn-sm" onclick="toggleDescEdit()">✎ Edit HTML</button>
+            <button class="btn btn-secondary btn-sm" onclick="toggleDescPreview()">👁 Preview</button>
           </div>
         </div>
       </div>
 
       <div class="card" id="faqCard">
         <div class="flex-between" style="margin-bottom:14px">
-          <div class="card-title" style="margin:0">馃帣锔?FAQ &amp; Voice Search Queries</div>
+          <div class="card-title" style="margin:0">🎙️ FAQ &amp; Voice Search Queries</div>
           <span class="alert alert-purple" style="padding:4px 10px;font-size:11px;margin:0">SGE &amp; Featured Snippet Ready</span>
         </div>
         <div id="faqDisplay"></div>
         <div class="mt-16">
-          <div class="section-label">FAQ HTML 鈥?COPY TO PRODUCT PAGE <span class="section-tag tag-new">ready to paste</span></div>
+          <div class="section-label">FAQ HTML — COPY TO PRODUCT PAGE <span class="section-tag tag-new">ready to paste</span></div>
           <div class="jsonld-wrap" style="border-color:#2A2A6A;background:#050510">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
               <span style="font-size:10px;color:#6080C0;letter-spacing:1px">FAQ HTML BLOCK</span>
@@ -379,10 +381,10 @@
 
       <div class="card" id="sgeCard">
         <div class="flex-between" style="margin-bottom:14px">
-          <div class="card-title" style="margin:0">馃 SGE Citation-Readiness Analysis</div>
+          <div class="card-title" style="margin:0">🤖 SGE Citation-Readiness Analysis</div>
           <span id="sgeBadge" class="section-tag" style="font-size:11px;padding:3px 10px"></span>
         </div>
-        <div class="alert alert-info" style="margin-bottom:12px;font-size:12px">鉁?Google SGE &amp; ChatGPT cite pages with self-contained, factual, authoritative passages.</div>
+        <div class="alert alert-info" style="margin-bottom:12px;font-size:12px">✦ Google SGE &amp; ChatGPT cite pages with self-contained, factual, authoritative passages.</div>
         <div id="sgePassageList" class="sge-passages"></div>
         <div class="mt-16" id="sgeSuggestionsWrap">
           <div class="card-title" style="margin-bottom:8px">HOW TO IMPROVE YOUR SGE SCORE</div>
@@ -392,28 +394,28 @@
 
       <div class="card" id="schemaCard">
         <div class="flex-between" style="margin-bottom:14px">
-          <div class="card-title" style="margin:0">馃К FAQ Schema 鈥?Ready for Schema Plus</div>
-          <span style="font-size:11px;color:var(--green)">FAQPage Rich Result 路 Google Search 路 SGE</span>
+          <div class="card-title" style="margin:0">🧬 FAQ Schema — Ready for Schema Plus</div>
+          <span style="font-size:11px;color:var(--green)">FAQPage Rich Result · Google Search · SGE</span>
         </div>
         <div class="alert alert-success" style="margin-bottom:12px;font-size:12px">
-          鉁?<strong>Option A 鈥?Manual:</strong> Schema Plus 鈫?FAQ tab 鈫?search for <strong id="schemaProductTitle" style="color:var(--gold-lt)">this product</strong> 鈫?paste Q&amp;A pairs.<br>
-          鉁?<strong>Option B 鈥?Bulk CSV:</strong> Download CSV below and use Schema Plus "Upload CSV".
+          ✦ <strong>Option A — Manual:</strong> Schema Plus → FAQ tab → search for <strong id="schemaProductTitle" style="color:var(--gold-lt)">this product</strong> → paste Q&amp;A pairs.<br>
+          ✦ <strong>Option B — Bulk CSV:</strong> Download CSV below and use Schema Plus "Upload CSV".
         </div>
         <div id="schemaPairsDisplay" style="margin-bottom:16px"></div>
         <div style="padding:14px 16px;background:var(--surface2);border:1px solid var(--border2);border-radius:8px">
           <div class="flex-between">
             <div>
-              <div style="font-size:12px;color:var(--cream);margin-bottom:3px">馃摜 Bulk Upload CSV</div>
+              <div style="font-size:12px;color:var(--cream);margin-bottom:3px">📥 Bulk Upload CSV</div>
               <div style="font-size:11px;color:var(--muted)">Ready-to-upload CSV for Schema Plus bulk import</div>
             </div>
-            <button class="btn btn-secondary btn-sm" onclick="downloadFaqCsv()" style="white-space:nowrap">猬?Download CSV</button>
+            <button class="btn btn-secondary btn-sm" onclick="downloadFaqCsv()" style="white-space:nowrap">⬇ Download CSV</button>
           </div>
         </div>
       </div>
 
       <div class="flex-between" style="margin-top:8px">
-        <button class="btn btn-secondary" onclick="resetUI()">鈫?Regenerate</button>
-        <button class="btn btn-primary" onclick="pushToShopify()" id="pushBtn">馃殌 Push to Shopify</button>
+        <button class="btn btn-secondary" onclick="resetUI()">← Regenerate</button>
+        <button class="btn btn-primary" onclick="pushToShopify()" id="pushBtn">🚀 Push to Shopify</button>
       </div>
     </div>
   </div>
@@ -422,30 +424,30 @@
 <div id="pane-rank" class="main hidden">
   <div class="flex-between" style="margin-bottom:20px">
     <div>
-      <div class="text-gold" style="font-size:16px;margin-bottom:4px">馃搳 Google Rank Tracker</div>
-      <div class="text-muted">Daily checks at 6am IST 路 Google India + Global 路 Top 100</div>
+      <div class="text-gold" style="font-size:16px;margin-bottom:4px">📊 Google Rank Tracker</div>
+      <div class="text-muted">Daily checks at 6am IST · Google India + Global · Top 100</div>
     </div>
     <div class="flex">
-      <button class="btn btn-secondary btn-sm" onclick="loadRankData()">鈫?Refresh</button>
-      <button class="btn btn-primary btn-sm" onclick="triggerAllChecks()">鈻?Check All Now</button>
+      <button class="btn btn-secondary btn-sm" onclick="loadRankData()">↻ Refresh</button>
+      <button class="btn btn-primary btn-sm" onclick="triggerAllChecks()">▶ Check All Now</button>
     </div>
   </div>
   <div class="rank-grid">
-    <div class="rank-stat"><div class="rank-stat-num" style="color:var(--gold-lt)" id="statTracked">鈥?/div><div class="rank-stat-label">TRACKED</div></div>
-    <div class="rank-stat"><div class="rank-stat-num" style="color:var(--green)"   id="statTop10">鈥?/div><div class="rank-stat-label">TOP 10 (IN)</div></div>
-    <div class="rank-stat"><div class="rank-stat-num" style="color:var(--blue)"    id="statTop50">鈥?/div><div class="rank-stat-label">TOP 50 (IN)</div></div>
-    <div class="rank-stat"><div class="rank-stat-num" style="color:var(--red)"     id="statNotFound">鈥?/div><div class="rank-stat-label">NOT RANKED</div></div>
+    <div class="rank-stat"><div class="rank-stat-num" style="color:var(--gold-lt)" id="statTracked">—</div><div class="rank-stat-label">TRACKED</div></div>
+    <div class="rank-stat"><div class="rank-stat-num" style="color:var(--green)"   id="statTop10">—</div><div class="rank-stat-label">TOP 10 (IN)</div></div>
+    <div class="rank-stat"><div class="rank-stat-num" style="color:var(--blue)"    id="statTop50">—</div><div class="rank-stat-label">TOP 50 (IN)</div></div>
+    <div class="rank-stat"><div class="rank-stat-num" style="color:var(--red)"     id="statNotFound">—</div><div class="rank-stat-label">NOT RANKED</div></div>
   </div>
   <div class="card" style="padding:0;overflow:hidden">
     <table class="rank-table">
       <thead><tr><th>PRODUCT</th><th>KEYWORD</th><th>GOOGLE.CO.IN</th><th>GOOGLE.COM</th><th>7-DAY TREND</th><th>LAST CHECKED</th><th>ACTIONS</th></tr></thead>
-      <tbody id="rankTableBody"><tr><td colspan="7" style="text-align:center;padding:40px;color:var(--muted)">Loading rank data鈥?/td></tr></tbody>
+      <tbody id="rankTableBody"><tr><td colspan="7" style="text-align:center;padding:40px;color:var(--muted)">Loading rank data…</td></tr></tbody>
     </table>
   </div>
   <div class="chart-container" id="chartSection" style="display:none">
     <div class="flex-between" style="margin-bottom:12px">
       <div class="text-gold" id="chartTitle" style="font-size:14px"></div>
-      <button class="btn btn-secondary btn-sm" onclick="hideChart()">鉁?Close</button>
+      <button class="btn btn-secondary btn-sm" onclick="hideChart()">✕ Close</button>
     </div>
     <canvas id="rankChart"></canvas>
   </div>
@@ -454,19 +456,19 @@
 <div id="pane-cann" class="main hidden">
   <div class="flex-between" style="margin-bottom:20px">
     <div>
-      <div class="text-gold" style="font-size:16px;margin-bottom:4px">馃攳 Keyword Cannibalization Checker</div>
+      <div class="text-gold" style="font-size:16px;margin-bottom:4px">🔍 Keyword Cannibalization Checker</div>
       <div class="text-muted">Detect product pages competing against each other in Google</div>
     </div>
-    <button class="btn btn-primary" onclick="runCannibalizationCheck()" id="cannBtn">鈻?Analyse All Products</button>
+    <button class="btn btn-primary" onclick="runCannibalizationCheck()" id="cannBtn">▶ Analyse All Products</button>
   </div>
   <div class="cann-grid" id="cannStats" style="display:none">
-    <div class="cann-stat"><div class="cann-stat-num" style="color:var(--gold-lt)" id="cannStatProducts">鈥?/div><div class="rank-stat-label">PRODUCTS ANALYSED</div></div>
-    <div class="cann-stat"><div class="cann-stat-num" style="color:var(--red)"     id="cannStatConflicts">鈥?/div><div class="rank-stat-label">CONFLICTS FOUND</div></div>
-    <div class="cann-stat"><div class="cann-stat-num" style="color:var(--orange)"  id="cannStatAffected">鈥?/div><div class="rank-stat-label">AFFECTED PRODUCTS</div></div>
+    <div class="cann-stat"><div class="cann-stat-num" style="color:var(--gold-lt)" id="cannStatProducts">—</div><div class="rank-stat-label">PRODUCTS ANALYSED</div></div>
+    <div class="cann-stat"><div class="cann-stat-num" style="color:var(--red)"     id="cannStatConflicts">—</div><div class="rank-stat-label">CONFLICTS FOUND</div></div>
+    <div class="cann-stat"><div class="cann-stat-num" style="color:var(--orange)"  id="cannStatAffected">—</div><div class="rank-stat-label">AFFECTED PRODUCTS</div></div>
   </div>
   <div id="cannResults">
     <div class="cann-empty">
-      <div style="font-size:48px;margin-bottom:16px">馃攳</div>
+      <div style="font-size:48px;margin-bottom:16px">🔍</div>
       <div style="color:var(--muted);font-size:14px">Click "Analyse All Products" to detect keyword conflicts</div>
     </div>
   </div>
@@ -475,23 +477,23 @@
 <div id="pane-priority" class="main hidden">
   <div class="flex-between" style="margin-bottom:20px">
     <div>
-      <div class="text-gold" style="font-size:16px;margin-bottom:4px">馃幆 SEO Rollout Prioritiser</div>
-      <div class="text-muted">Identifies which products to optimise next 鈥?ranked by opportunity</div>
+      <div class="text-gold" style="font-size:16px;margin-bottom:4px">🎯 SEO Rollout Prioritiser</div>
+      <div class="text-muted">Identifies which products to optimise next — ranked by opportunity</div>
     </div>
-    <button class="btn btn-primary" onclick="runPrioritiser()" id="priorityBtn">鈻?Generate Priority List</button>
+    <button class="btn btn-primary" onclick="runPrioritiser()" id="priorityBtn">▶ Generate Priority List</button>
   </div>
   <div id="priorityStats" style="display:none;margin-bottom:20px">
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
-      <div class="rank-stat"><div class="rank-stat-num" style="color:var(--red)"    id="pStatHot">鈥?/div><div class="rank-stat-label">馃敶 DO NOW</div></div>
-      <div class="rank-stat"><div class="rank-stat-num" style="color:var(--orange)" id="pStatWarm">鈥?/div><div class="rank-stat-label">馃煚 THIS WEEK</div></div>
-      <div class="rank-stat"><div class="rank-stat-num" style="color:var(--green)"  id="pStatCool">鈥?/div><div class="rank-stat-label">馃煝 NEXT WEEK</div></div>
-      <div class="rank-stat"><div class="rank-stat-num" style="color:var(--muted)"  id="pStatDone">鈥?/div><div class="rank-stat-label">鉁?ALREADY DONE</div></div>
+      <div class="rank-stat"><div class="rank-stat-num" style="color:var(--red)"    id="pStatHot">—</div><div class="rank-stat-label">🔴 DO NOW</div></div>
+      <div class="rank-stat"><div class="rank-stat-num" style="color:var(--orange)" id="pStatWarm">—</div><div class="rank-stat-label">🟠 THIS WEEK</div></div>
+      <div class="rank-stat"><div class="rank-stat-num" style="color:var(--green)"  id="pStatCool">—</div><div class="rank-stat-label">🟢 NEXT WEEK</div></div>
+      <div class="rank-stat"><div class="rank-stat-num" style="color:var(--muted)"  id="pStatDone">—</div><div class="rank-stat-label">✅ ALREADY DONE</div></div>
     </div>
-    <div class="alert alert-info mt-8" style="font-size:12px">鉁?<strong>Recommended pace:</strong> 5鈥? products per week to avoid triggering a site-wide content reset signal to Google.</div>
+    <div class="alert alert-info mt-8" style="font-size:12px">✦ <strong>Recommended pace:</strong> 5–8 products per week to avoid triggering a site-wide content reset signal to Google.</div>
   </div>
   <div id="priorityResults">
     <div style="text-align:center;padding:60px;color:var(--muted)">
-      <div style="font-size:48px;margin-bottom:16px">馃幆</div>
+      <div style="font-size:48px;margin-bottom:16px">🎯</div>
       <div style="font-size:14px">Click "Generate Priority List" to analyse your products</div>
     </div>
   </div>
@@ -510,20 +512,20 @@
   <div class="card">
     <div class="card-title">Manual Triggers</div>
     <div class="flex" style="gap:12px;flex-wrap:wrap">
-      <button class="btn btn-secondary" onclick="triggerCron()">鈴?Trigger Weekly SEO Cron</button>
-      <button class="btn btn-secondary" onclick="triggerAllChecks()">馃搳 Trigger All Rank Checks</button>
+      <button class="btn btn-secondary" onclick="triggerCron()">⏰ Trigger Weekly SEO Cron</button>
+      <button class="btn btn-secondary" onclick="triggerAllChecks()">📊 Trigger All Rank Checks</button>
     </div>
-    <p class="text-muted mt-8" style="font-size:12px">Weekly SEO cron: Sunday 11pm IST 路 Daily rank check: 6am IST 路 Weekly rank report: Monday 7am IST</p>
+    <p class="text-muted mt-8" style="font-size:12px">Weekly SEO cron: Sunday 11pm IST · Daily rank check: 6am IST · Weekly rank report: Monday 7am IST</p>
   </div>
   <div class="card">
-    <div class="card-title">馃獢 Seasonal SEO Opportunities 鈥?Hindu Calendar 2026</div>
-    <div class="alert alert-warn" style="margin-bottom:16px;font-size:12px">鉁?Plan content and SEO pushes 2鈥? weeks before each festival.</div>
+    <div class="card-title">🪔 Seasonal SEO Opportunities — Hindu Calendar 2026</div>
+    <div class="alert alert-warn" style="margin-bottom:16px;font-size:12px">✦ Plan content and SEO pushes 2–3 weeks before each festival.</div>
     <div class="seasonal-grid" id="seasonalGrid"></div>
   </div>
 </div>
 
 <script>
-// 鈹€鈹€鈹€ State 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── State ────────────────────────────────────────────────────────────────────
 const DEFAULT_PROXY = "https://rk-seo-proxy.onrender.com";
 let PROXY_URL = (localStorage.getItem("rk_proxy_url") || "").trim();
 if (!PROXY_URL || PROXY_URL === "undefined" || PROXY_URL === "null") PROXY_URL = DEFAULT_PROXY;
@@ -531,7 +533,7 @@ let products = [], selectedProduct = null, isConnected = false;
 let rankChart = null, rankDataCache = {}, keywordsCache = {};
 let generatedFAQs = [];
 
-// 鈹€鈹€鈹€ Service product detection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Service product detection ────────────────────────────────────────────────
 function isServiceProduct(product) {
   if (!product) return false;
   const title = (product.title || "").toLowerCase();
@@ -546,14 +548,14 @@ function isServiceProduct(product) {
   return serviceKeywords.some(kw => title.includes(kw) || tags.includes(kw) || body.includes(kw));
 }
 
-// 鈹€鈹€鈹€ Init 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Init ─────────────────────────────────────────────────────────────────────
 window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("proxyUrl").value = PROXY_URL;
   checkConnectionWithRetry();
   renderSeasonalPanel();
 });
 
-// 鈹€鈹€鈹€ Tabs 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Tabs ─────────────────────────────────────────────────────────────────────
 function switchTab(tab) {
   ["seo","rank","cann","priority","options"].forEach(t => {
     document.getElementById("pane-" + t).classList.toggle("hidden", t !== tab);
@@ -562,13 +564,13 @@ function switchTab(tab) {
   if (tab === "rank" && isConnected) loadRankData();
 }
 
-// 鈹€鈹€鈹€ Connection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Connection ───────────────────────────────────────────────────────────────
 async function checkConnectionWithRetry(attempts = 4, delayMs = 3000) {
   for (let i = 0; i < attempts; i++) {
     const ok = await checkConnection();
     if (ok) return;
     if (i < attempts - 1) {
-      if (i === 0) document.getElementById("connectionStatus").innerHTML = `<span class="status-dot"></span><span style="color:var(--gold);font-size:12px">鈴?Waking up server鈥?/span>`;
+      if (i === 0) document.getElementById("connectionStatus").innerHTML = `<span class="status-dot"></span><span style="color:var(--gold);font-size:12px">⏳ Waking up server…</span>`;
       await new Promise(r => setTimeout(r, delayMs));
     }
   }
@@ -587,23 +589,22 @@ async function checkConnection() {
 function setConnected(connected) {
   isConnected = connected;
   document.getElementById("statusDot").className = "status-dot" + (connected ? " connected" : "");
-  document.getElementById("connectionStatus").innerHTML = `<span class="status-dot${connected ? ' connected' : ''}"></span>${connected ? "Connected 鈥?d59207-af.myshopify.com" : "Not connected"}`;
+  document.getElementById("connectionStatus").innerHTML = `<span class="status-dot${connected ? ' connected' : ''}"></span>${connected ? "Connected — d59207-af.myshopify.com" : "Not connected"}`;
   document.getElementById("connectBtn").textContent   = connected ? "Reconnect" : "Connect";
   document.getElementById("refreshBtn").style.display = connected ? "inline-block" : "none";
   document.getElementById("connectPrompt").classList.toggle("hidden", connected);
   document.getElementById("mainUI").classList.toggle("hidden", !connected);
 }
 
-function connectShopify() { window.location.href = PROXY_URL + "/auth/install"; }
 
-// 鈹€鈹€鈹€ Products 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Products ─────────────────────────────────────────────────────────────────
 async function loadProducts() {
   try {
     const res  = await fetch(PROXY_URL + "/products");
     const data = await res.json();
     products   = (data.products || []).filter(p => p.status === "active");
     const sel  = document.getElementById("productSelect");
-    sel.innerHTML = `<option value="">鈥?Select a product (${products.length} active) 鈥?/option>`;
+    sel.innerHTML = `<option value="">— Select a product (${products.length} active) —</option>`;
     products.forEach(p => { const opt = document.createElement("option"); opt.value = p.id; opt.textContent = p.title; sel.appendChild(opt); });
   } catch (e) { console.error("Load products failed:", e); }
 }
@@ -628,25 +629,25 @@ function onProductChange() {
 
   const wordCount = (selectedProduct.body_html || "").replace(/<[^>]+>/g, "").split(/\s+/).filter(Boolean).length;
   badge.style.display = "inline-block";
-  if (wordCount >= 300) { badge.className = "thin-badge thin-rich"; badge.textContent = `鉁?Rich (${wordCount} words)`; warning.classList.add("hidden"); }
+  if (wordCount >= 300) { badge.className = "thin-badge thin-rich"; badge.textContent = `✓ Rich (${wordCount} words)`; warning.classList.add("hidden"); }
   else if (wordCount >= 100) { badge.className = "thin-badge thin-ok"; badge.textContent = `~ OK (${wordCount} words)`; warning.classList.add("hidden"); }
-  else { badge.className = "thin-badge thin-thin"; badge.textContent = `鈿?Thin (${wordCount} words)`; warning.classList.remove("hidden"); }
+  else { badge.className = "thin-badge thin-thin"; badge.textContent = `⚠ Thin (${wordCount} words)`; warning.classList.remove("hidden"); }
 }
 
-// 鈹€鈹€鈹€ Agent helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Agent helpers ────────────────────────────────────────────────────────────
 function setAgent(id, state, msg) {
   const el = document.getElementById("agent-" + id);
   if (!el) return;
   el.className = "agent-card" + (state === "running" ? " running" : state === "done" ? " done" : state === "error" ? " error" : "");
   el.querySelector(".agent-status").innerHTML = state === "running" ? `<span class="spinner"></span><span class="pulse">${msg}</span>` : msg;
 }
-function resetAgents() { ["research","keywords","gaps","desc","title","metadesc","tags","faq","schema"].forEach(id => setAgent(id, "", "Waiting鈥?)); }
+function resetAgents() { ["research","keywords","gaps","desc","title","metadesc","tags","faq","schema"].forEach(id => setAgent(id, "", "Waiting…")); }
 
-// 鈹€鈹€鈹€ Main pipeline 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Main pipeline ────────────────────────────────────────────────────────────
 async function runAllAgents() {
   if (!selectedProduct) return;
   const runBtn = document.getElementById("runBtn");
-  runBtn.disabled = true; runBtn.textContent = "Running鈥?;
+  runBtn.disabled = true; runBtn.textContent = "Running…";
   resetAgents();
   document.getElementById("scoreSection").classList.remove("hidden");
   document.getElementById("compSection").classList.remove("hidden");
@@ -657,21 +658,21 @@ async function runAllAgents() {
   document.getElementById("sgeScoreWrap").classList.add("hidden");
   generatedFAQs = [];
 
-  // 鈹€鈹€ Detect product type 鈹€鈹€
+  // ── Detect product type ──
   const isService = isServiceProduct(selectedProduct);
-  console.log(`Product type: ${isService ? "馃洉 SERVICE" : "馃摽 BEAD/PRODUCT"}`);
+  console.log(`Product type: ${isService ? "🛕 SERVICE" : "📿 BEAD/PRODUCT"}`);
 
   // Update E-E-A-T badge
   document.getElementById("eeAtBadge").textContent = isService
-    ? "鉁?MVS Vedapadasala 路 Ghana Parayana 路 Kanchi Mutt VRNT 路 Feb 2026 Google E-E-A-T compliant"
-    : "鉁?Intent-based E-E-A-T expression 路 No direct claims 路 Feb 2026 Google update compliant";
+    ? "✦ MVS Vedapadasala · Ghana Parayana · Kanchi Mutt VRNT · Feb 2026 Google E-E-A-T compliant"
+    : "✦ Intent-based E-E-A-T expression · No direct claims · Feb 2026 Google update compliant";
 
   const before = scoreSEO(selectedProduct.metafields_global_title_tag, selectedProduct.metafields_global_description_tag, selectedProduct.tags, selectedProduct.body_html, isService);
   showScore("scoreBefore", before);
 
   try {
     // Agent 1: Competitor research
-    setAgent("research", "running", "Fetching competitors鈥?);
+    setAgent("research", "running", "Fetching competitors…");
     const compRes  = await fetch(PROXY_URL + "/competitor/research", {
       method: "POST", headers: {"Content-Type":"application/json"},
       body: JSON.stringify({ productTitle: selectedProduct.title }),
@@ -680,10 +681,10 @@ async function runAllAgents() {
     const competitors = compData.competitors || [];
     document.getElementById("compCount").textContent = `${competitors.length} pages found`;
     renderCompetitors(competitors);
-    setAgent("research", "done", `鉁?${competitors.length} pages`);
+    setAgent("research", "done", `✓ ${competitors.length} pages`);
 
     // Agent 2: Keyword extraction
-    setAgent("keywords", "running", "Extracting keywords鈥?);
+    setAgent("keywords", "running", "Extracting keywords…");
     let extractedKeywords = { h1: [], h2h3: [], phrases: [] };
     let keywordBrief = "";
     if (competitors.length > 0) {
@@ -700,7 +701,7 @@ async function runAllAgents() {
     }
     renderKeywords(extractedKeywords);
     const totalKw = (extractedKeywords.h1||[]).length + (extractedKeywords.h2h3||[]).length + (extractedKeywords.phrases||[]).length;
-    setAgent("keywords", "done", totalKw > 0 ? `鉁?${totalKw} keywords` : "鉁?No keywords");
+    setAgent("keywords", "done", totalKw > 0 ? `✓ ${totalKw} keywords` : "✓ No keywords");
 
     if (totalKw > 0) {
       const kw = extractedKeywords;
@@ -712,7 +713,7 @@ async function runAllAgents() {
     }
 
     // Agent 3: Gap analysis
-    setAgent("gaps", "running", "Identifying gaps鈥?);
+    setAgent("gaps", "running", "Identifying gaps…");
     let gaps = [], gapSummary = "Cover all key topics comprehensively.";
     if (competitors.length > 0) {
       const compTexts = competitors.map((c,i) => `Competitor ${i+1}:\n${(c.content||c.snippet||"").slice(0,500)}`).join("\n---\n");
@@ -725,7 +726,7 @@ async function runAllAgents() {
       gapSummary = gaps.length > 0 ? `Fill these gaps: ${gaps.join("; ")}` : gapSummary;
     }
     renderGaps(gaps);
-    setAgent("gaps", "done", gaps.length > 0 ? `鉁?${gaps.length} gaps` : "鉁?No gaps");
+    setAgent("gaps", "done", gaps.length > 0 ? `✓ ${gaps.length} gaps` : "✓ No gaps");
 
     const descPlain  = (selectedProduct.body_html||"").replace(/<[^>]+>/g,"").slice(0,400);
     const isHalfMoon = /half.?moon|1\s*mukhi/i.test(selectedProduct.title);
@@ -733,31 +734,31 @@ async function runAllAgents() {
       ? `MANDATORY KEYWORD PLACEMENT:\n${keywordBrief}\n\nRULES:\n- <h2>: include a H1 PRIMARY KEYWORD\n- Opening <p>: include H1 keyword within first 60 words\n- <h3> headings: use H2/H3 KEYWORDS naturally\n- Bullets: address LONG-TAIL INTENT PHRASES as experience statements\n- FAQ: word 2+ questions using exact LONG-TAIL INTENT PHRASE phrasing`
       : "Use standard SEO keywords appropriate to this product/service.";
 
-    setAgent("desc",     "running", "Writing鈥?);
-    setAgent("title",    "running", "Writing鈥?);
-    setAgent("metadesc", "running", "Writing鈥?);
-    setAgent("tags",     "running", "Writing鈥?);
-    setAgent("faq",      "running", "Generating Q&As鈥?);
+    setAgent("desc",     "running", "Writing…");
+    setAgent("title",    "running", "Writing…");
+    setAgent("metadesc", "running", "Writing…");
+    setAgent("tags",     "running", "Writing…");
+    setAgent("faq",      "running", "Generating Q&As…");
 
-    // 鈹€鈹€ Branch prompts based on product type 鈹€鈹€
+    // ── Branch prompts based on product type ──
     const descSystem = isService
-      ? `You are a Vedic services SEO expert for RudraKailash.com. Write service page descriptions. Rules: keyword in first <h2> and opening <p>; cite MVS Vedapadasala vadhyar credentials and Kanchi Mutt VRNT achievement; NEVER mention Rudraksha beads, RKRTL certification, or X-ray testing 鈥?this is a SERVICE not a physical product. Output clean HTML only. No markdown.`
-      : `You are a Rudraksha SEO expert for RudraKailash.com. Rules: keyword in first <h2> and first <p> within 100 words; E-E-A-T framing ("seekers describe鈥?); cite Elaeocarpus ganitrus botanical name; mention RKRTL as independent lab; zero direct health claims. MAX 4 lines prose per section 鈥?use <ul> bullets if more needed. MAX 550 words total. Output clean HTML only. No markdown.`;
+      ? `You are a Vedic services SEO expert for RudraKailash.com. Write service page descriptions. Rules: keyword in first <h2> and opening <p>; cite MVS Vedapadasala vadhyar credentials and Kanchi Mutt VRNT achievement; NEVER mention Rudraksha beads, RKRTL certification, or X-ray testing — this is a SERVICE not a physical product. Output clean HTML only. No markdown.`
+      : `You are a Rudraksha SEO expert for RudraKailash.com. Rules: keyword in first <h2> and first <p> within 100 words; E-E-A-T framing ("seekers describe…"); cite Elaeocarpus ganitrus botanical name; mention RKRTL as independent lab; zero direct health claims. MAX 4 lines prose per section — use <ul> bullets if more needed. MAX 550 words total. Output clean HTML only. No markdown.`;
 
     const descUser = isService
-      ? `Write a concise SEO service page for "${selectedProduct.title}" by RudraKailash.com.\n\nSERVICE CONTEXT:\n- Performed by: MVS Vedapadasala vadhyars, Coimbatore\n- Ghana Parayana tradition\n- Vadhyars Bhadrinath, Akshai Jayaraman, Harish 鈥?1st place in VRNT exam by Kanchi Mutt\n- Online service: customer books 鈫?vadhyars perform 鈫?video/photo documentation sent\n- Real padashaala, not studio\n\nSTRUCTURE:\n<h2>${selectedProduct.title} 鈥?Online Vedic Service by MVS Vedapadasala</h2>\n<p>[2鈥? sentences: what this service is, who performs it, spiritual purpose]</p>\n<h3>Vedic Significance of ${selectedProduct.title}</h3>\n[MAX 4 lines: deity invoked, scriptural basis, spiritual purpose]\n<h3>What You Receive 鈥?Complete Inclusions</h3>\n<ul>[4鈥? bullets: trained vadhyar performance, video/photo documentation, personalised sankalpa, date flexibility]</ul>\n<h3>Performed by MVS Vedapadasala 鈥?Authentic Coimbatore Vadhyars</h3>\n[2鈥? lines: Ghana Parayana training, Kanchi Mutt VRNT 1st place achievement, real padashaala not studio]\n<h3>Who Should Book ${selectedProduct.title}</h3>\n<ul>[4鈥? bullets: ideal devotee profiles]</ul>\n<h3>How to Book Your ${selectedProduct.title}</h3>\n<ul>[4 bullets: step-by-step booking process]</ul>\n<h3>Frequently Asked Questions</h3>\n<dl>[4 FAQs: how online service works, vadhyar credentials, what is delivered, booking/customisation]</dl>\n\n${kwPlacement}\n\nGAPS TO COVER: ${gapSummary}\nCURRENT DESCRIPTION: ${descPlain}\n\nOUTPUT: Clean HTML only, starting with <h2>. NO bead/RKRTL/X-ray language.`
-      : `Write a concise SEO product description for "${selectedProduct.title}" on RudraKailash.com.\n\nMAIN KEYWORD: ${selectedProduct.title}\n${isHalfMoon ? "SPECIAL NOTE: This is a South Indian Half Moon 1 Mukhi 鈥?NOT Nepali. Present this positively as the authentic, scripturally valid form available today.\n" : ""}\nSTRUCTURE:\n<h2>${selectedProduct.title} 鈥?Authentic RKRTL-Certified Rudraksha Bead</h2>\n<p>[2鈥? sentences: keyword in first sentence, Nepal origin, seeker hook]</p>\n<h3>Spiritual Significance of ${selectedProduct.title} in Vedic Tradition</h3>\n[MAX 4 lines or <ul>: ruling deity, scripture, mantra, planet]\n<h3>What Seekers Describe About ${selectedProduct.title}</h3>\n<ul>[4鈥? bullets: "Seekers report鈥? 鈥?NO direct claims]</ul>\n<h3>RKRTL Certification 鈥?Verified Authentic ${selectedProduct.title}</h3>\n[2鈥? lines: X-ray imaging + microscopy, Elaeocarpus ganitrus confirmed, certificate with unique ID 鈥?no verification links]\n<h3>Who Should Buy ${selectedProduct.title}</h3>\n<ul>[4鈥? bullets: seeker profiles]</ul>\n<h3>How to Wear Your ${selectedProduct.title}</h3>\n<ul>[4鈥? bullets: day to begin, thread/metal, mantra, energisation]</ul>\n<h3>Frequently Asked Questions</h3>\n<dl>[4 FAQs: authenticity/certification, origin, who can wear it, value/quality]</dl>\n\n${kwPlacement}\n\nGAPS TO COVER: ${gapSummary}\nCURRENT DESCRIPTION: ${descPlain}\n\nOUTPUT: Clean HTML only, starting with <h2>.`;
+      ? `Write a concise SEO service page for "${selectedProduct.title}" by RudraKailash.com.\n\nSERVICE CONTEXT:\n- Performed by: MVS Vedapadasala vadhyars, Coimbatore\n- Ghana Parayana tradition\n- Vadhyars Bhadrinath, Akshai Jayaraman, Harish — 1st place in VRNT exam by Kanchi Mutt\n- Online service: customer books → vadhyars perform → video/photo documentation sent\n- Real padashaala, not studio\n\nSTRUCTURE:\n<h2>${selectedProduct.title} — Online Vedic Service by MVS Vedapadasala</h2>\n<p>[2–3 sentences: what this service is, who performs it, spiritual purpose]</p>\n<h3>Vedic Significance of ${selectedProduct.title}</h3>\n[MAX 4 lines: deity invoked, scriptural basis, spiritual purpose]\n<h3>What You Receive — Complete Inclusions</h3>\n<ul>[4–5 bullets: trained vadhyar performance, video/photo documentation, personalised sankalpa, date flexibility]</ul>\n<h3>Performed by MVS Vedapadasala — Authentic Coimbatore Vadhyars</h3>\n[2–3 lines: Ghana Parayana training, Kanchi Mutt VRNT 1st place achievement, real padashaala not studio]\n<h3>Who Should Book ${selectedProduct.title}</h3>\n<ul>[4–5 bullets: ideal devotee profiles]</ul>\n<h3>How to Book Your ${selectedProduct.title}</h3>\n<ul>[4 bullets: step-by-step booking process]</ul>\n<h3>Frequently Asked Questions</h3>\n<dl>[4 FAQs: how online service works, vadhyar credentials, what is delivered, booking/customisation]</dl>\n\n${kwPlacement}\n\nGAPS TO COVER: ${gapSummary}\nCURRENT DESCRIPTION: ${descPlain}\n\nOUTPUT: Clean HTML only, starting with <h2>. NO bead/RKRTL/X-ray language.`
+      : `Write a concise SEO product description for "${selectedProduct.title}" on RudraKailash.com.\n\nMAIN KEYWORD: ${selectedProduct.title}\n${isHalfMoon ? "SPECIAL NOTE: This is a South Indian Half Moon 1 Mukhi — NOT Nepali. Present this positively as the authentic, scripturally valid form available today.\n" : ""}\nSTRUCTURE:\n<h2>${selectedProduct.title} — Authentic RKRTL-Certified Rudraksha Bead</h2>\n<p>[2–3 sentences: keyword in first sentence, Nepal origin, seeker hook]</p>\n<h3>Spiritual Significance of ${selectedProduct.title} in Vedic Tradition</h3>\n[MAX 4 lines or <ul>: ruling deity, scripture, mantra, planet]\n<h3>What Seekers Describe About ${selectedProduct.title}</h3>\n<ul>[4–5 bullets: "Seekers report…" — NO direct claims]</ul>\n<h3>RKRTL Certification — Verified Authentic ${selectedProduct.title}</h3>\n[2–3 lines: X-ray imaging + microscopy, Elaeocarpus ganitrus confirmed, certificate with unique ID — no verification links]\n<h3>Who Should Buy ${selectedProduct.title}</h3>\n<ul>[4–5 bullets: seeker profiles]</ul>\n<h3>How to Wear Your ${selectedProduct.title}</h3>\n<ul>[4–5 bullets: day to begin, thread/metal, mantra, energisation]</ul>\n<h3>Frequently Asked Questions</h3>\n<dl>[4 FAQs: authenticity/certification, origin, who can wear it, value/quality]</dl>\n\n${kwPlacement}\n\nGAPS TO COVER: ${gapSummary}\nCURRENT DESCRIPTION: ${descPlain}\n\nOUTPUT: Clean HTML only, starting with <h2>.`;
 
     const metaDescUser = isService
-      ? `Meta description for "${selectedProduct.title}" service on RudraKailash.com. 145鈥?55 characters. Mention MVS Vedapadasala vadhyars, authentic Vedic tradition, booking CTA. Do NOT mention RKRTL.`
-      : `Meta description for "${selectedProduct.title}" on RudraKailash.com. 145鈥?55 chars. Mention RKRTL certified + CTA.`;
+      ? `Meta description for "${selectedProduct.title}" service on RudraKailash.com. 145–155 characters. Mention MVS Vedapadasala vadhyars, authentic Vedic tradition, booking CTA. Do NOT mention RKRTL.`
+      : `Meta description for "${selectedProduct.title}" on RudraKailash.com. 145–155 chars. Mention RKRTL certified + CTA.`;
 
     const tagsUser = isService
-      ? `10鈥?2 Shopify tags for the "${selectedProduct.title}" service on RudraKailash.com. Current: "${selectedProduct.tags||"none"}". Include: online puja, vedic service, MVS Vedapadasala, homa/puja type, coimbatore vadhyar, authentic vedic ritual, book online. No RKRTL tags.`
-      : `10鈥?2 Shopify tags for "${selectedProduct.title}". Current: "${selectedProduct.tags||"none"}". Include mukhi variants, rudraksha, RKRTL, certified, authentic, spiritual terms.`;
+      ? `10–12 Shopify tags for the "${selectedProduct.title}" service on RudraKailash.com. Current: "${selectedProduct.tags||"none"}". Include: online puja, vedic service, MVS Vedapadasala, homa/puja type, coimbatore vadhyar, authentic vedic ritual, book online. No RKRTL tags.`
+      : `10–12 Shopify tags for "${selectedProduct.title}". Current: "${selectedProduct.tags||"none"}". Include mukhi variants, rudraksha, RKRTL, certified, authentic, spiritual terms.`;
 
     const faqUser = isService
-      ? `Generate 6 voice-search FAQ pairs for the "${selectedProduct.title}" service on RudraKailash.com.\n\nRules:\n- Natural spoken language questions\n- Answers under 50 words, self-contained, citation-ready\n- Include: what the service is, who performs it (MVS Vedapadasala), how online delivery works, credentials (Kanchi Mutt VRNT), who should book, how to book\n- NO RKRTL certification language 鈥?this is a service not a product\n\nOutput ONLY JSON: [{"q":"Question?","a":"Answer under 50 words."},...] 6 items.`
+      ? `Generate 6 voice-search FAQ pairs for the "${selectedProduct.title}" service on RudraKailash.com.\n\nRules:\n- Natural spoken language questions\n- Answers under 50 words, self-contained, citation-ready\n- Include: what the service is, who performs it (MVS Vedapadasala), how online delivery works, credentials (Kanchi Mutt VRNT), who should book, how to book\n- NO RKRTL certification language — this is a service not a product\n\nOutput ONLY JSON: [{"q":"Question?","a":"Answer under 50 words."},...] 6 items.`
       : `Generate 6 voice-search FAQ pairs for "${selectedProduct.title}" Rudraksha bead on RudraKailash.com.\n\nRules:\n- Natural spoken language questions\n- Answers under 50 words, self-contained, citation-ready\n- Include: what it is, who should wear it, how to wear it, RKRTL authentication, Vedic significance, buying advice\n- Experience-framing only, mention RKRTL certification\n\nOutput ONLY JSON: [{"q":"Question?","a":"Answer."},...] 6 items.`;
 
     const [descResult, titleResult, metaDescResult, tagsResult, faqResult] = await Promise.allSettled([
@@ -774,15 +775,15 @@ async function runAllAgents() {
     const newMetaDesc = metaDescResult.status === "fulfilled" ? metaDescResult.value.trim()     : "";
     const newTags     = tagsResult.status     === "fulfilled" ? tagsResult.value.trim()         : selectedProduct.tags || "";
 
-    setAgent("desc",     descResult.status     === "fulfilled" ? "done" : "error", descResult.status     === "fulfilled" ? "鉁?Done" : "鉁?Failed");
-    setAgent("title",    titleResult.status    === "fulfilled" ? "done" : "error", titleResult.status    === "fulfilled" ? "鉁?Done" : "鉁?Failed");
-    setAgent("metadesc", metaDescResult.status === "fulfilled" ? "done" : "error", metaDescResult.status === "fulfilled" ? "鉁?Done" : "鉁?Failed");
-    setAgent("tags",     tagsResult.status     === "fulfilled" ? "done" : "error", tagsResult.status     === "fulfilled" ? "鉁?Done" : "鉁?Failed");
+    setAgent("desc",     descResult.status     === "fulfilled" ? "done" : "error", descResult.status     === "fulfilled" ? "✓ Done" : "✗ Failed");
+    setAgent("title",    titleResult.status    === "fulfilled" ? "done" : "error", titleResult.status    === "fulfilled" ? "✓ Done" : "✗ Failed");
+    setAgent("metadesc", metaDescResult.status === "fulfilled" ? "done" : "error", metaDescResult.status === "fulfilled" ? "✓ Done" : "✗ Failed");
+    setAgent("tags",     tagsResult.status     === "fulfilled" ? "done" : "error", tagsResult.status     === "fulfilled" ? "✓ Done" : "✗ Failed");
 
     if (faqResult.status === "fulfilled") {
-      try { generatedFAQs = JSON.parse(faqResult.value.replace(/^```json\s*/i,"").replace(/\s*```$/,"").trim()); setAgent("faq","done",`鉁?${generatedFAQs.length} Q&As`); }
-      catch(e) { generatedFAQs = []; setAgent("faq","error","鉁?Parse failed"); }
-    } else { setAgent("faq","error","鉁?Failed"); }
+      try { generatedFAQs = JSON.parse(faqResult.value.replace(/^```json\s*/i,"").replace(/\s*```$/,"").trim()); setAgent("faq","done",`✓ ${generatedFAQs.length} Q&As`); }
+      catch(e) { generatedFAQs = []; setAgent("faq","error","✗ Parse failed"); }
+    } else { setAgent("faq","error","✗ Failed"); }
 
     document.getElementById("currentMetaTitle").textContent = selectedProduct.metafields_global_title_tag || "(not set)";
     document.getElementById("currentMetaDesc").textContent  = selectedProduct.metafields_global_description_tag || "(not set)";
@@ -799,20 +800,20 @@ async function runAllAgents() {
     const after = scoreSEO(newTitle, newMetaDesc, newTags, newDesc, isService);
     showScore("scoreAfter", after);
     document.getElementById("scoreImprovement").textContent = `+${after - before} PTS`;
-    document.getElementById("scoreReadiness").textContent   = after >= 80 ? "Excellent 鈥?ready to push" : after >= 60 ? "Good 鈥?review before push" : "Needs improvement";
+    document.getElementById("scoreReadiness").textContent   = after >= 80 ? "Excellent — ready to push" : after >= 60 ? "Good — review before push" : "Needs improvement";
 
     renderFAQSection(generatedFAQs);
-    setAgent("schema","running","Building schema鈥?);
+    setAgent("schema","running","Building schema…");
     await generateAndRenderSchema(selectedProduct, newTitle, newMetaDesc, newTags, generatedFAQs);
-    setAgent("schema","done","鉁?JSON-LD ready");
+    setAgent("schema","done","✓ JSON-LD ready");
     await runSGEAnalysis(newDesc, selectedProduct.title, isService);
     document.getElementById("resultsSection").classList.remove("hidden");
 
   } catch (e) { console.error("Pipeline error:", e); }
-  runBtn.disabled = false; runBtn.textContent = "鈻?Run AI SEO Agents";
+  runBtn.disabled = false; runBtn.textContent = "▶ Run AI SEO Agents";
 }
 
-// 鈹€鈹€鈹€ AI call 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── AI call ──────────────────────────────────────────────────────────────────
 async function aiGenerate(system, user, max_tokens = 1200) {
   const res = await fetch(PROXY_URL + "/ai/generate", {
     method: "POST", headers: {"Content-Type":"application/json"},
@@ -826,7 +827,7 @@ async function aiGenerate(system, user, max_tokens = 1200) {
 
 function cleanHTML(text) { return text.replace(/^```(?:html)?\s*/i,"").replace(/\s*```\s*$/,"").trim(); }
 
-// 鈹€鈹€鈹€ FAQ Render 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── FAQ Render ───────────────────────────────────────────────────────────────
 function renderFAQSection(faqs) {
   if (!faqs || faqs.length === 0) { document.getElementById("faqDisplay").innerHTML = '<div class="text-muted">No FAQs generated.</div>'; return; }
   document.getElementById("faqDisplay").innerHTML = faqs.map((f,i) => `<div class="faq-item"><div class="faq-q">Q${i+1}: ${escHtml(f.q)}</div><div class="faq-a">${escHtml(f.a)}</div></div>`).join("");
@@ -835,7 +836,7 @@ function renderFAQSection(faqs) {
   document.getElementById("faqHtmlCode").textContent = faqHtml;
 }
 
-// 鈹€鈹€鈹€ Schema 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Schema ───────────────────────────────────────────────────────────────────
 async function generateAndRenderSchema(product, metaTitle, metaDesc, tags, faqs) {
   const titleEl = document.getElementById("schemaProductTitle");
   if (titleEl) titleEl.textContent = `"${product.title}"`;
@@ -862,7 +863,7 @@ function copyField(index, field) {
   const text = field === "q" ? f.q : f.a;
   const btnId = field === "q" ? `btn-q-${index}` : `btn-a-${index}`;
   const orig  = field === "q" ? "Copy Q" : "Copy A";
-  navigator.clipboard.writeText(text).then(() => { const btn = document.getElementById(btnId); if (btn) { btn.textContent = "鉁?Copied!"; setTimeout(() => btn.textContent = orig, 2000); } });
+  navigator.clipboard.writeText(text).then(() => { const btn = document.getElementById(btnId); if (btn) { btn.textContent = "✓ Copied!"; setTimeout(() => btn.textContent = orig, 2000); } });
 }
 
 function downloadFaqCsv() {
@@ -882,7 +883,7 @@ function downloadFaqCsv() {
   a.click(); URL.revokeObjectURL(url);
 }
 
-// 鈹€鈹€鈹€ SGE Analysis 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── SGE Analysis ─────────────────────────────────────────────────────────────
 async function runSGEAnalysis(descHtml, productTitle, isService = false) {
   try {
     const descText = descHtml.replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim();
@@ -901,27 +902,27 @@ function renderSGEAnalysis(data) {
   scoreEl.textContent = `${score}/10`;
   scoreEl.className = "sge-score-num " + (score >= 7 ? "sge-high" : score >= 5 ? "sge-mid" : "sge-low");
   const badge = document.getElementById("sgeBadge");
-  badge.textContent = data.verdict === "High" ? "馃煝 High Citation Probability" : data.verdict === "Medium" ? "馃煛 Medium Citation Probability" : "馃敶 Low Citation Probability";
+  badge.textContent = data.verdict === "High" ? "🟢 High Citation Probability" : data.verdict === "Medium" ? "🟡 Medium Citation Probability" : "🔴 Low Citation Probability";
   badge.style.cssText = `background:${data.verdict==="High"?"#0A2A0A":data.verdict==="Medium"?"#2A2000":"#2A0A0A"};color:${data.verdict==="High"?"var(--green)":data.verdict==="Medium"?"var(--orange)":"var(--red)"};border:1px solid ${data.verdict==="High"?"#1A5A1A":data.verdict==="Medium"?"#5A4000":"#5A1A1A"};padding:3px 10px;border-radius:8px`;
   document.getElementById("sgeScoreWrap").classList.remove("hidden");
   document.getElementById("sgePassageList").innerHTML = (data.passages||[]).map(p => {
     const cls = p.score >= 7 ? "sge-p-high" : p.score >= 5 ? "sge-p-mid" : "sge-p-low";
     return `<div class="sge-passage-item ${cls}"><span class="sge-p-score">${p.score}/10</span><div style="color:var(--cream);font-size:12px;font-weight:bold;margin-bottom:3px">${escHtml(p.type)}</div><div style="color:var(--muted);font-size:11px">${escHtml(p.reason)}</div></div>`;
   }).join("");
-  document.getElementById("sgeSuggestions").innerHTML = (data.improvements||[]).map((s,i) => `<div style="margin-bottom:8px">鉁?${i+1}. ${escHtml(s)}</div>`).join("");
+  document.getElementById("sgeSuggestions").innerHTML = (data.improvements||[]).map((s,i) => `<div style="margin-bottom:8px">✦ ${i+1}. ${escHtml(s)}</div>`).join("");
 }
 
-// 鈹€鈹€鈹€ Render helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Render helpers ───────────────────────────────────────────────────────────
 function renderCompetitors(competitors) {
   const list = document.getElementById("compList");
   if (!competitors.length) { list.innerHTML = '<div class="text-muted">No competitor pages found.</div>'; return; }
-  list.innerHTML = competitors.map(c => `<div class="comp-item"><div class="comp-url">馃敆 ${c.url} <span class="comp-badge ${c.fetched?'badge-fetched':'badge-snippet'}">${c.fetched?"Full page fetched":"Snippet only"}</span></div><div class="comp-snippet">${(c.content||c.snippet||"").slice(0,200)}鈥?/div></div>`).join("");
+  list.innerHTML = competitors.map(c => `<div class="comp-item"><div class="comp-url">🔗 ${c.url} <span class="comp-badge ${c.fetched?'badge-fetched':'badge-snippet'}">${c.fetched?"Full page fetched":"Snippet only"}</span></div><div class="comp-snippet">${(c.content||c.snippet||"").slice(0,200)}…</div></div>`).join("");
 }
 
 function renderGaps(gaps) {
   if (!gaps.length) return;
   document.getElementById("gapSection").classList.remove("hidden");
-  document.getElementById("gapTags").innerHTML = gaps.map(g => `<span class="gap-tag">鈼?${g}</span>`).join("");
+  document.getElementById("gapTags").innerHTML = gaps.map(g => `<span class="gap-tag">● ${g}</span>`).join("");
 }
 
 function renderKeywords(kw) {
@@ -929,9 +930,9 @@ function renderKeywords(kw) {
   if (!h1s.length && !h2h3s.length && !phrases.length) return;
   document.getElementById("kwSection").classList.remove("hidden");
   let html = "";
-  if (h1s.length) html += `<div style="margin-bottom:6px"><span style="font-size:10px;color:var(--orange);letter-spacing:.5px;margin-right:6px">H1 PRIMARY</span>${h1s.map(k=>`<span class="kw-tag-h1">鈼?${k}</span>`).join("")}</div>`;
-  if (h2h3s.length) html += `<div style="margin-bottom:6px"><span style="font-size:10px;color:#D090F0;letter-spacing:.5px;margin-right:6px">H2/H3 SUB-TOPICS</span>${h2h3s.map(k=>`<span class="kw-tag-h2h3">鈼?${k}</span>`).join("")}</div>`;
-  if (phrases.length) html += `<div style="margin-bottom:6px"><span style="font-size:10px;color:#60C0C0;letter-spacing:.5px;margin-right:6px">LONG-TAIL INTENT</span>${phrases.map(k=>`<span class="kw-tag-phrase">鈼?${k}</span>`).join("")}</div>`;
+  if (h1s.length) html += `<div style="margin-bottom:6px"><span style="font-size:10px;color:var(--orange);letter-spacing:.5px;margin-right:6px">H1 PRIMARY</span>${h1s.map(k=>`<span class="kw-tag-h1">● ${k}</span>`).join("")}</div>`;
+  if (h2h3s.length) html += `<div style="margin-bottom:6px"><span style="font-size:10px;color:#D090F0;letter-spacing:.5px;margin-right:6px">H2/H3 SUB-TOPICS</span>${h2h3s.map(k=>`<span class="kw-tag-h2h3">● ${k}</span>`).join("")}</div>`;
+  if (phrases.length) html += `<div style="margin-bottom:6px"><span style="font-size:10px;color:#60C0C0;letter-spacing:.5px;margin-right:6px">LONG-TAIL INTENT</span>${phrases.map(k=>`<span class="kw-tag-phrase">● ${k}</span>`).join("")}</div>`;
   document.getElementById("kwTags").innerHTML = html;
 }
 
@@ -943,7 +944,7 @@ function renderNewTags() {
 }
 function updateCharCount(inputId, countId) { document.getElementById(countId).textContent = document.getElementById(inputId).value.length; }
 
-// 鈹€鈹€鈹€ SEO Score (service-aware) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── SEO Score (service-aware) ────────────────────────────────────────────────
 function scoreSEO(metaTitle, metaDesc, tags, desc, isService = false) {
   const titleLen = (metaTitle||"").length, descLen = (metaDesc||"").length;
   const tagCount = (tags||"").split(",").filter(Boolean).length;
@@ -971,33 +972,33 @@ function showScore(elId, score) {
 function toggleDescEdit() { document.getElementById("descPreview").style.display="none"; document.getElementById("newDesc").style.display="block"; }
 function toggleDescPreview() { document.getElementById("descPreview").innerHTML=cleanHTML(document.getElementById("newDesc").value); document.getElementById("descPreview").style.display="block"; document.getElementById("newDesc").style.display="none"; }
 
-// 鈹€鈹€鈹€ Push to Shopify 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Push to Shopify ──────────────────────────────────────────────────────────
 async function pushToShopify() {
   if (!selectedProduct) return;
   const pushBtn = document.getElementById("pushBtn");
-  pushBtn.disabled = true; pushBtn.textContent = "Pushing鈥?;
+  pushBtn.disabled = true; pushBtn.textContent = "Pushing…";
   try {
     const payload = { body_html: document.getElementById("newDesc").value, metafields_global_title_tag: document.getElementById("newMetaTitle").value, metafields_global_description_tag: document.getElementById("newMetaDesc").value, tags: document.getElementById("newTags").value };
     const res  = await fetch(PROXY_URL + "/products/" + selectedProduct.id, { method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload) });
     const data = await res.json();
     if (data.success) {
-      pushBtn.textContent = "鉁?Pushed!"; pushBtn.style.background = "var(--green)"; pushBtn.style.color = "#000";
+      pushBtn.textContent = "✅ Pushed!"; pushBtn.style.background = "var(--green)"; pushBtn.style.color = "#000";
       await fetch(PROXY_URL + "/rank/keywords", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ productId: String(selectedProduct.id), productTitle: selectedProduct.title }) });
-      setTimeout(() => { pushBtn.disabled=false; pushBtn.textContent="馃殌 Push to Shopify"; pushBtn.style.background=""; pushBtn.style.color=""; }, 3000);
+      setTimeout(() => { pushBtn.disabled=false; pushBtn.textContent="🚀 Push to Shopify"; pushBtn.style.background=""; pushBtn.style.color=""; }, 3000);
     } else throw new Error(data.error || "Push failed");
-  } catch (e) { pushBtn.textContent = "鉂?Failed 鈥?Retry"; pushBtn.disabled = false; }
+  } catch (e) { pushBtn.textContent = "❌ Failed — Retry"; pushBtn.disabled = false; }
 }
 
 function resetUI() { document.getElementById("scoreSection").classList.add("hidden"); document.getElementById("compSection").classList.add("hidden"); document.getElementById("resultsSection").classList.add("hidden"); resetAgents(); }
-function copyToClipboard(elId) { const text=document.getElementById(elId).textContent; navigator.clipboard.writeText(text).then(()=>{ const btn=event.target,orig=btn.textContent; btn.textContent="鉁?Copied!"; setTimeout(()=>btn.textContent=orig,2000); }); }
+function copyToClipboard(elId) { const text=document.getElementById(elId).textContent; navigator.clipboard.writeText(text).then(()=>{ const btn=event.target,orig=btn.textContent; btn.textContent="✓ Copied!"; setTimeout(()=>btn.textContent=orig,2000); }); }
 function escHtml(str) { return (str||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
 
-// 鈹€鈹€鈹€ Cannibalization 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Cannibalization ──────────────────────────────────────────────────────────
 async function runCannibalizationCheck() {
   if (!isConnected || products.length === 0) { alert("No products loaded."); return; }
   const btn = document.getElementById("cannBtn");
-  btn.disabled = true; btn.textContent = "Analysing鈥?;
-  document.getElementById("cannResults").innerHTML = `<div class="cann-empty"><span class="spinner"></span><div style="color:var(--muted);margin-top:12px">Analysing ${products.length} products鈥?/div></div>`;
+  btn.disabled = true; btn.textContent = "Analysing…";
+  document.getElementById("cannResults").innerHTML = `<div class="cann-empty"><span class="spinner"></span><div style="color:var(--muted);margin-top:12px">Analysing ${products.length} products…</div></div>`;
   try {
     const batchSize = 30, allConflicts = [];
     for (let i = 0; i < products.length; i += batchSize) {
@@ -1012,46 +1013,46 @@ async function runCannibalizationCheck() {
     document.getElementById("cannStatProducts").textContent=products.length;
     document.getElementById("cannStatConflicts").textContent=allConflicts.length;
     document.getElementById("cannStatAffected").textContent=affectedTitles.size;
-    if (allConflicts.length === 0) { document.getElementById("cannResults").innerHTML=`<div class="cann-empty"><div style="font-size:48px;margin-bottom:16px">鉁?/div><div style="color:var(--green);font-size:14px">No significant keyword cannibalization detected</div></div>`; }
+    if (allConflicts.length === 0) { document.getElementById("cannResults").innerHTML=`<div class="cann-empty"><div style="font-size:48px;margin-bottom:16px">✅</div><div style="color:var(--green);font-size:14px">No significant keyword cannibalization detected</div></div>`; }
     else {
       allConflicts.sort((a,b)=>({high:0,medium:1,low:2}[a.severity]||2)-({high:0,medium:1,low:2}[b.severity]||2));
       document.getElementById("cannResults").innerHTML = allConflicts.map((c,i)=>{
         const sevClass=c.severity==="high"?"sev-high":c.severity==="medium"?"sev-med":"sev-low";
-        const sevLabel=c.severity==="high"?"馃敶 HIGH":c.severity==="medium"?"馃煛 MEDIUM":"馃煝 LOW";
-        return `<div class="conflict-card"><div class="conflict-header"><div style="color:var(--cream);font-size:13px">Conflict #${i+1}</div><span class="conflict-severity ${sevClass}">${sevLabel}</span></div><div class="conflict-products">${(c.products||[]).map(p=>`<div class="conflict-product">馃搫 ${escHtml(p)}</div>`).join("")}</div><div class="conflict-shared"><div style="font-size:11px;color:var(--muted);margin-bottom:4px">COMPETING FOR:</div>${(c.sharedKeywords||[]).map(kw=>`<span class="shared-kw">${escHtml(kw)}</span>`).join("")}</div>${c.recommendation?`<div style="margin-top:10px;padding:8px 12px;background:var(--surface2);border-radius:5px;font-size:12px;color:var(--gold)">馃挕 ${escHtml(c.recommendation)}</div>`:""}</div>`;
+        const sevLabel=c.severity==="high"?"🔴 HIGH":c.severity==="medium"?"🟡 MEDIUM":"🟢 LOW";
+        return `<div class="conflict-card"><div class="conflict-header"><div style="color:var(--cream);font-size:13px">Conflict #${i+1}</div><span class="conflict-severity ${sevClass}">${sevLabel}</span></div><div class="conflict-products">${(c.products||[]).map(p=>`<div class="conflict-product">📄 ${escHtml(p)}</div>`).join("")}</div><div class="conflict-shared"><div style="font-size:11px;color:var(--muted);margin-bottom:4px">COMPETING FOR:</div>${(c.sharedKeywords||[]).map(kw=>`<span class="shared-kw">${escHtml(kw)}</span>`).join("")}</div>${c.recommendation?`<div style="margin-top:10px;padding:8px 12px;background:var(--surface2);border-radius:5px;font-size:12px;color:var(--gold)">💡 ${escHtml(c.recommendation)}</div>`:""}</div>`;
       }).join("");
     }
   } catch(e) { document.getElementById("cannResults").innerHTML=`<div class="cann-empty" style="color:var(--red)">Analysis failed: ${e.message}</div>`; }
-  btn.disabled=false; btn.textContent="鈻?Re-analyse";
+  btn.disabled=false; btn.textContent="▶ Re-analyse";
 }
 
-// 鈹€鈹€鈹€ Seasonal Panel 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Seasonal Panel ───────────────────────────────────────────────────────────
 function renderSeasonalPanel() {
   const today = new Date();
   const festivals = [
-    { name:"Mahashivratri", date:"2026-02-26", mukhis:["1 Mukhi","Rudraksha Mala","14 Mukhi"], icon:"馃敱" },
-    { name:"Gudi Padwa / Ugadi", date:"2026-03-19", mukhis:["1 Mukhi","5 Mukhi","Gauri Shankar"], icon:"馃獢" },
-    { name:"Ram Navami", date:"2026-04-07", mukhis:["12 Mukhi","8 Mukhi","Rudraksha Mala"], icon:"馃徆" },
-    { name:"Shravan Month Starts", date:"2026-07-17", mukhis:["Rudraksha Mala","5 Mukhi","1 Mukhi","14 Mukhi"], icon:"馃寵" },
-    { name:"Nag Panchami", date:"2026-07-29", mukhis:["8 Mukhi","Rudraksha Mala"], icon:"馃悕" },
-    { name:"Raksha Bandhan", date:"2026-08-13", mukhis:["Gauri Shankar","5 Mukhi","Rudraksha Bracelet"], icon:"馃巰" },
-    { name:"Ganesh Chaturthi", date:"2026-08-23", mukhis:["Ganesh Mukhi","8 Mukhi","Ganapati Bead"], icon:"馃悩" },
-    { name:"Navratri Starts", date:"2026-10-09", mukhis:["Gauri Shankar","9 Mukhi","Navdurga Mala"], icon:"馃獢" },
-    { name:"Dussehra", date:"2026-10-18", mukhis:["12 Mukhi","10 Mukhi","Rudraksha Mala"], icon:"鈿旓笍" },
-    { name:"Diwali", date:"2026-11-07", mukhis:["Gauri Shankar","14 Mukhi","Rudraksha Gift Sets"], icon:"鉁? },
-    { name:"Karthik Purnima", date:"2026-11-22", mukhis:["Rudraksha Mala","5 Mukhi","1 Mukhi"], icon:"馃寱" },
+    { name:"Mahashivratri", date:"2026-02-26", mukhis:["1 Mukhi","Rudraksha Mala","14 Mukhi"], icon:"🔱" },
+    { name:"Gudi Padwa / Ugadi", date:"2026-03-19", mukhis:["1 Mukhi","5 Mukhi","Gauri Shankar"], icon:"🪔" },
+    { name:"Ram Navami", date:"2026-04-07", mukhis:["12 Mukhi","8 Mukhi","Rudraksha Mala"], icon:"🏹" },
+    { name:"Shravan Month Starts", date:"2026-07-17", mukhis:["Rudraksha Mala","5 Mukhi","1 Mukhi","14 Mukhi"], icon:"🌙" },
+    { name:"Nag Panchami", date:"2026-07-29", mukhis:["8 Mukhi","Rudraksha Mala"], icon:"🐍" },
+    { name:"Raksha Bandhan", date:"2026-08-13", mukhis:["Gauri Shankar","5 Mukhi","Rudraksha Bracelet"], icon:"🎀" },
+    { name:"Ganesh Chaturthi", date:"2026-08-23", mukhis:["Ganesh Mukhi","8 Mukhi","Ganapati Bead"], icon:"🐘" },
+    { name:"Navratri Starts", date:"2026-10-09", mukhis:["Gauri Shankar","9 Mukhi","Navdurga Mala"], icon:"🪔" },
+    { name:"Dussehra", date:"2026-10-18", mukhis:["12 Mukhi","10 Mukhi","Rudraksha Mala"], icon:"⚔️" },
+    { name:"Diwali", date:"2026-11-07", mukhis:["Gauri Shankar","14 Mukhi","Rudraksha Gift Sets"], icon:"✨" },
+    { name:"Karthik Purnima", date:"2026-11-22", mukhis:["Rudraksha Mala","5 Mukhi","1 Mukhi"], icon:"🌕" },
   ];
   document.getElementById("seasonalGrid").innerHTML = festivals.map(f => {
     const diff = Math.round((new Date(f.date)-today)/(1000*60*60*24));
     const daysBadge = diff < 0 ? `<span class="seasonal-days" style="background:#1A1A1A;color:var(--muted)">Passed</span>`
-      : diff <= 14 ? `<span class="seasonal-days days-urgent">鈿?${diff}d away</span>`
-      : diff <= 30 ? `<span class="seasonal-days days-soon">鈴?${diff}d away</span>`
+      : diff <= 14 ? `<span class="seasonal-days days-urgent">⚡ ${diff}d away</span>`
+      : diff <= 30 ? `<span class="seasonal-days days-soon">⏳ ${diff}d away</span>`
       : `<span class="seasonal-days days-upcoming">${diff}d away</span>`;
-    return `<div class="seasonal-card"><div class="seasonal-festival">${f.icon} ${f.name} ${daysBadge}</div><div class="seasonal-date">馃搮 ${new Date(f.date).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"})}</div><div style="font-size:11px;color:var(--muted);margin-bottom:6px">SEO-push 2鈥? weeks before:</div><div class="seasonal-products">${f.mukhis.map(m=>`<span class="seasonal-prod-pill">${m}</span>`).join("")}</div></div>`;
+    return `<div class="seasonal-card"><div class="seasonal-festival">${f.icon} ${f.name} ${daysBadge}</div><div class="seasonal-date">📅 ${new Date(f.date).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"})}</div><div style="font-size:11px;color:var(--muted);margin-bottom:6px">SEO-push 2–3 weeks before:</div><div class="seasonal-products">${f.mukhis.map(m=>`<span class="seasonal-prod-pill">${m}</span>`).join("")}</div></div>`;
   }).join("");
 }
 
-// 鈹€鈹€鈹€ Rank Tracker 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Rank Tracker ─────────────────────────────────────────────────────────────
 async function loadRankData() {
   try {
     const res = await fetch(PROXY_URL + "/rank/data");
@@ -1071,17 +1072,17 @@ function renderRankTable() {
     const history=re.history||[],latest=history[history.length-1]||{},prev=history[history.length-8]||{};
     const posIN=latest.posIN||null,posGlobal=latest.posGlobal||null,prevIN=prev.posIN||null;
     const deltaIN=prevIN&&posIN?prevIN-posIN:null;
-    rows.push({ id, title:re.productTitle||ke.productTitle||"Unknown", keyword:re.keyword||ke.keyword||"鈥?, posIN, posGlobal, deltaIN, lastChecked:re.lastChecked?new Date(re.lastChecked).toLocaleDateString("en-IN"):"Never", isCustom:ke.isCustom||false, hasHistory:history.length>0 });
+    rows.push({ id, title:re.productTitle||ke.productTitle||"Unknown", keyword:re.keyword||ke.keyword||"—", posIN, posGlobal, deltaIN, lastChecked:re.lastChecked?new Date(re.lastChecked).toLocaleDateString("en-IN"):"Never", isCustom:ke.isCustom||false, hasHistory:history.length>0 });
   });
   updateRankStats(rows);
   tbody.innerHTML = rows.map(r => `<tr>
     <td style="color:var(--cream);font-size:13px;max-width:180px">${r.title}</td>
-    <td><input class="keyword-input" style="width:200px" value="${r.keyword}" id="kw-${r.id}" onchange="updateKeyword('${r.id}','${encodeURIComponent(r.title)}')" title="${r.isCustom?'Custom':'Auto-generated'} keyword"/>${r.isCustom?'<span style="font-size:10px;color:var(--gold);margin-left:4px">鉁?custom</span>':''}</td>
+    <td><input class="keyword-input" style="width:200px" value="${r.keyword}" id="kw-${r.id}" onchange="updateKeyword('${r.id}','${encodeURIComponent(r.title)}')" title="${r.isCustom?'Custom':'Auto-generated'} keyword"/>${r.isCustom?'<span style="font-size:10px;color:var(--gold);margin-left:4px">✎ custom</span>':''}</td>
     <td style="text-align:center">${posBadge(r.posIN)}</td>
     <td style="text-align:center">${posBadge(r.posGlobal)}</td>
     <td style="text-align:center">${trendBadge(r.deltaIN,r.hasHistory)}</td>
     <td style="color:var(--muted);font-size:12px">${r.lastChecked}</td>
-    <td><div class="flex" style="gap:6px"><button class="btn btn-secondary btn-sm" onclick="checkOneProduct('${r.id}')">Check</button>${r.hasHistory?`<button class="btn btn-secondary btn-sm" onclick="showChart('${r.id}','${r.title.replace(/'/g,"\\'")}')">馃搱</button>`:''}<button class="btn btn-danger btn-sm" onclick="removeTracking('${r.id}')">鉁?/button></div></td>
+    <td><div class="flex" style="gap:6px"><button class="btn btn-secondary btn-sm" onclick="checkOneProduct('${r.id}')">Check</button>${r.hasHistory?`<button class="btn btn-secondary btn-sm" onclick="showChart('${r.id}','${r.title.replace(/'/g,"\\'")}')">📈</button>`:''}<button class="btn btn-danger btn-sm" onclick="removeTracking('${r.id}')">✕</button></div></td>
   </tr>`).join("");
 }
 
@@ -1091,11 +1092,11 @@ function posBadge(pos) {
   return `<span class="pos-badge ${cls}">#${pos}</span>`;
 }
 function trendBadge(delta, hasHistory) {
-  if (!hasHistory) return `<span class="trend-new">New 鈥?checking</span>`;
-  if (delta===null) return `<span class="trend-same">鈥?/span>`;
-  if (delta>0) return `<span class="trend-up">鈻?${delta} up</span>`;
-  if (delta<0) return `<span class="trend-down">鈻?${Math.abs(delta)} down</span>`;
-  return `<span class="trend-same">鈫?same</span>`;
+  if (!hasHistory) return `<span class="trend-new">New — checking</span>`;
+  if (delta===null) return `<span class="trend-same">—</span>`;
+  if (delta>0) return `<span class="trend-up">▲ ${delta} up</span>`;
+  if (delta<0) return `<span class="trend-down">▼ ${Math.abs(delta)} down</span>`;
+  return `<span class="trend-same">→ same</span>`;
 }
 function updateRankStats(rows) {
   document.getElementById("statTracked").textContent=rows.length;
@@ -1110,14 +1111,14 @@ async function updateKeyword(productId, encodedTitle) {
   await loadRankData();
 }
 async function checkOneProduct(productId) {
-  const btn=event.target; btn.textContent="Checking鈥?; btn.disabled=true;
+  const btn=event.target; btn.textContent="Checking…"; btn.disabled=true;
   await fetch(PROXY_URL+"/rank/check/"+productId,{method:"POST"});
   setTimeout(async()=>{await loadRankData();btn.textContent="Check";btn.disabled=false;},35000);
 }
 async function triggerAllChecks() {
-  const btn=event.target; btn.textContent="Checking all鈥?; btn.disabled=true;
+  const btn=event.target; btn.textContent="Checking all…"; btn.disabled=true;
   for (const id of Object.keys(keywordsCache)) { await fetch(PROXY_URL+"/rank/check/"+id,{method:"POST"}); await new Promise(r=>setTimeout(r,2000)); }
-  setTimeout(async()=>{await loadRankData();btn.textContent="鈻?Check All Now";btn.disabled=false;},40000);
+  setTimeout(async()=>{await loadRankData();btn.textContent="▶ Check All Now";btn.disabled=false;},40000);
 }
 async function removeTracking(productId) {
   if(!confirm("Remove from rank tracking?")) return;
@@ -1127,7 +1128,7 @@ async function removeTracking(productId) {
 function showChart(productId, title) {
   const entry=rankDataCache[productId]; if(!entry||!entry.history?.length) return;
   document.getElementById("chartSection").style.display="block";
-  document.getElementById("chartTitle").textContent=`馃搱 ${title}`;
+  document.getElementById("chartTitle").textContent=`📈 ${title}`;
   const history=entry.history.slice(-30);
   if (rankChart) rankChart.destroy();
   const ctx=document.getElementById("rankChart").getContext("2d");
@@ -1139,18 +1140,18 @@ function showChart(productId, title) {
 }
 function hideChart() { document.getElementById("chartSection").style.display="none"; if(rankChart){rankChart.destroy();rankChart=null;} }
 
-// 鈹€鈹€鈹€ Options 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Options ──────────────────────────────────────────────────────────────────
 function saveOptions() {
   PROXY_URL=document.getElementById("proxyUrl").value.trim().replace(/\/$/,"");
   localStorage.setItem("rk_proxy_url",PROXY_URL);
-  document.getElementById("optionsMsg").textContent="鉁?Saved. Reconnecting鈥?;
+  document.getElementById("optionsMsg").textContent="✅ Saved. Reconnecting…";
   checkConnection();
 }
 async function testConnection() {
   try {
     const res=await fetch(PROXY_URL+"/"); const data=await res.json();
-    document.getElementById("optionsMsg").innerHTML=`鉁?Connected 路 Anthropic:${data.anthropicKeyConfigured?"鉁?:"鉂?} 路 Serper:${data.serperConfigured?"鉁?:"鉂?} 路 Email:${data.emailConfigured?"鉁?:"鉂?} 路 Tracked:${data.rankTracking?.trackedProducts||0}`;
-  } catch(e) { document.getElementById("optionsMsg").textContent="鉂?Cannot reach proxy: "+e.message; }
+    document.getElementById("optionsMsg").innerHTML=`✅ Connected · Anthropic:${data.anthropicKeyConfigured?"✅":"❌"} · Serper:${data.serperConfigured?"✅":"❌"} · Email:${data.emailConfigured?"✅":"❌"} · Tracked:${data.rankTracking?.trackedProducts||0}`;
+  } catch(e) { document.getElementById("optionsMsg").textContent="❌ Cannot reach proxy: "+e.message; }
 }
 async function triggerCron() {
   const secret=prompt("Enter Shopify Client Secret:"); if(!secret) return;
@@ -1158,15 +1159,15 @@ async function triggerCron() {
   const data=await res.json(); alert(data.message||"Triggered.");
 }
 
-// 鈹€鈹€鈹€ Prioritise 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Prioritise ───────────────────────────────────────────────────────────────
 async function runPrioritiser() {
   if(!isConnected||products.length===0){alert("Products not loaded.");return;}
-  const btn=document.getElementById("priorityBtn"); btn.disabled=true; btn.textContent="Analysing鈥?;
-  document.getElementById("priorityResults").innerHTML=`<div style="text-align:center;padding:40px;color:var(--muted)"><span class="spinner"></span><div style="margin-top:12px">Scoring ${products.length} products鈥?/div></div>`;
+  const btn=document.getElementById("priorityBtn"); btn.disabled=true; btn.textContent="Analysing…";
+  document.getElementById("priorityResults").innerHTML=`<div style="text-align:center;padding:40px;color:var(--muted)"><span class="spinner"></span><div style="margin-top:12px">Scoring ${products.length} products…</div></div>`;
   if(Object.keys(rankDataCache).length===0) await loadRankData();
   const scored=products.map(p=>scoreProduct(p)).sort((a,b)=>b.priorityScore-a.priorityScore);
   renderPriorityTable(scored);
-  btn.disabled=false; btn.textContent="鈫?Refresh List";
+  btn.disabled=false; btn.textContent="↻ Refresh List";
 }
 
 function scoreProduct(product) {
@@ -1198,15 +1199,15 @@ function scoreProduct(product) {
   const priorityScore=rankScore+contentScore+(notTracked?10:0);
 
   let tier="",tierColor="",tierBg="";
-  if(alreadyOptimised){tier="鉁?Done";tierColor="var(--muted)";tierBg="var(--surface2)";}
-  else if(priorityScore>=60){tier="馃敶 Do Now";tierColor="var(--red)";tierBg="#2A0A0A";}
-  else if(priorityScore>=40){tier="馃煚 This Week";tierColor="var(--orange)";tierBg="#2A1A00";}
-  else{tier="馃煝 Next Week";tierColor="var(--green)";tierBg="#0A1A0A";}
+  if(alreadyOptimised){tier="✅ Done";tierColor="var(--muted)";tierBg="var(--surface2)";}
+  else if(priorityScore>=60){tier="🔴 Do Now";tierColor="var(--red)";tierBg="#2A0A0A";}
+  else if(priorityScore>=40){tier="🟠 This Week";tierColor="var(--orange)";tierBg="#2A1A00";}
+  else{tier="🟢 Next Week";tierColor="var(--green)";tierBg="#0A1A0A";}
 
   const reasons=[];
-  if(posIN>=11&&posIN<=30)reasons.push(`Ranking #${posIN} 鈥?one good push to page 1`);
-  if(!posIN)reasons.push("Not ranked 鈥?fresh SEO will establish baseline");
-  if(wordCount<100)reasons.push("Bare description 鈥?thin content penalty risk");
+  if(posIN>=11&&posIN<=30)reasons.push(`Ranking #${posIN} — one good push to page 1`);
+  if(!posIN)reasons.push("Not ranked — fresh SEO will establish baseline");
+  if(wordCount<100)reasons.push("Bare description — thin content penalty risk");
   else if(wordCount<250)reasons.push(`Short description (${wordCount} words)`);
   if(!hasAuth)reasons.push(isSvc?"No MVS Vedapadasala credentials":"No RKRTL certification language");
   if(!hasMetaTitle)reasons.push("Missing meta title");
@@ -1214,22 +1215,22 @@ function scoreProduct(product) {
   if(notTracked)reasons.push("Not yet in rank tracker");
   if(alreadyOptimised)reasons.push("Rich content + credentials + meta tags present");
 
-  return { id, title:product.title, posIN, rankBadge, wordCount, priorityScore, tier, tierColor, tierBg, alreadyOptimised, reason:reasons.slice(0,2).join(" 路 ")||"Standard priority", handle:product.handle||"", isService:isSvc };
+  return { id, title:product.title, posIN, rankBadge, wordCount, priorityScore, tier, tierColor, tierBg, alreadyOptimised, reason:reasons.slice(0,2).join(" · ")||"Standard priority", handle:product.handle||"", isService:isSvc };
 }
 
 function renderPriorityTable(scored) {
-  const hot=scored.filter(p=>p.tier==="馃敶 Do Now").length,warm=scored.filter(p=>p.tier==="馃煚 This Week").length;
-  const cool=scored.filter(p=>p.tier==="馃煝 Next Week").length,done=scored.filter(p=>p.alreadyOptimised).length;
+  const hot=scored.filter(p=>p.tier==="🔴 Do Now").length,warm=scored.filter(p=>p.tier==="🟠 This Week").length;
+  const cool=scored.filter(p=>p.tier==="🟢 Next Week").length,done=scored.filter(p=>p.alreadyOptimised).length;
   document.getElementById("priorityStats").style.display="block";
   document.getElementById("pStatHot").textContent=hot; document.getElementById("pStatWarm").textContent=warm;
   document.getElementById("pStatCool").textContent=cool; document.getElementById("pStatDone").textContent=done;
   document.getElementById("priorityResults").innerHTML=`
     <div class="flex" style="gap:8px;margin-bottom:16px;flex-wrap:wrap">
       <button class="btn btn-secondary btn-sm" onclick="filterPriority('all',this)" style="border-color:var(--gold);color:var(--gold)">All (${scored.length})</button>
-      <button class="btn btn-secondary btn-sm" onclick="filterPriority('now',this)">馃敶 Do Now (${hot})</button>
-      <button class="btn btn-secondary btn-sm" onclick="filterPriority('week',this)">馃煚 This Week (${warm})</button>
-      <button class="btn btn-secondary btn-sm" onclick="filterPriority('next',this)">馃煝 Next Week (${cool})</button>
-      <button class="btn btn-secondary btn-sm" onclick="filterPriority('done',this)">鉁?Done (${done})</button>
+      <button class="btn btn-secondary btn-sm" onclick="filterPriority('now',this)">🔴 Do Now (${hot})</button>
+      <button class="btn btn-secondary btn-sm" onclick="filterPriority('week',this)">🟠 This Week (${warm})</button>
+      <button class="btn btn-secondary btn-sm" onclick="filterPriority('next',this)">🟢 Next Week (${cool})</button>
+      <button class="btn btn-secondary btn-sm" onclick="filterPriority('done',this)">✅ Done (${done})</button>
     </div>
     <div class="card" style="padding:0;overflow:hidden">
       <table class="rank-table">
@@ -1240,7 +1241,7 @@ function renderPriorityTable(scored) {
 }
 
 function priorityRow(p, rank) {
-  const wordBadge=p.wordCount<100?`<span style="color:var(--red);font-size:11px">鈿?${p.wordCount}w</span>`:p.wordCount<250?`<span style="color:var(--orange);font-size:11px">${p.wordCount}w</span>`:`<span style="color:var(--green);font-size:11px">鉁?${p.wordCount}w</span>`;
+  const wordBadge=p.wordCount<100?`<span style="color:var(--red);font-size:11px">⚠ ${p.wordCount}w</span>`:p.wordCount<250?`<span style="color:var(--orange);font-size:11px">${p.wordCount}w</span>`:`<span style="color:var(--green);font-size:11px">✓ ${p.wordCount}w</span>`;
   const svcTag=p.isService?` <span style="font-size:9px;background:#0A1A2A;color:var(--blue);border:1px solid #1A4A6A;padding:1px 5px;border-radius:4px">svc</span>`:"";
   return `<tr data-tier="${p.tier}">
     <td style="color:var(--muted);font-size:12px">${rank}</td>
@@ -1249,7 +1250,7 @@ function priorityRow(p, rank) {
     <td style="text-align:center">${wordBadge}</td>
     <td style="text-align:center"><span style="font-size:11px;padding:3px 10px;border-radius:8px;background:${p.tierBg};color:${p.tierColor};border:1px solid ${p.tierColor}40">${p.tier}</span></td>
     <td style="color:var(--muted);font-size:11px;max-width:220px">${p.reason}</td>
-    <td><button class="btn btn-secondary btn-sm" onclick="jumpToProduct('${p.id}')" ${p.alreadyOptimised?'style="opacity:.5"':''}>${p.alreadyOptimised?"Re-run":"鈻?Optimise"}</button></td>
+    <td><button class="btn btn-secondary btn-sm" onclick="jumpToProduct('${p.id}')" ${p.alreadyOptimised?'style="opacity:.5"':''}>${p.alreadyOptimised?"Re-run":"▶ Optimise"}</button></td>
   </tr>`;
 }
 
@@ -1259,8 +1260,8 @@ function filterPriority(filter, btn) {
   document.querySelectorAll("#priorityTableBody tr").forEach(row=>{
     const tier=row.getAttribute("data-tier")||"";
     row.style.display=(filter==="all"||
-      (filter==="now"&&tier==="馃敶 Do Now")||(filter==="week"&&tier==="馃煚 This Week")||
-      (filter==="next"&&tier==="馃煝 Next Week")||(filter==="done"&&tier==="鉁?Done"))?"":"none";
+      (filter==="now"&&tier==="🔴 Do Now")||(filter==="week"&&tier==="🟠 This Week")||
+      (filter==="next"&&tier==="🟢 Next Week")||(filter==="done"&&tier==="✅ Done"))?"":"none";
   });
 }
 
