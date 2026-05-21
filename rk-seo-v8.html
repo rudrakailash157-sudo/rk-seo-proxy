@@ -534,19 +534,14 @@ let rankChart = null, rankDataCache = {}, keywordsCache = {};
 let generatedFAQs = [];
 
 // ─── Service product detection ────────────────────────────────────────────────
-// STRICT: title-only matching with exact service keywords
-// Physical products (malas, bracelets, beads, kavach) must NOT be flagged
 function isServiceProduct(product) {
   if (!product) return false;
   const title = " " + (product.title || "").toLowerCase().trim() + " ";
-  // Service keywords — checked with spaces around them to avoid partial matches
-  // e.g. " homa " matches "Ganapathi Homa" but not "Mahalakshmi"
   const serviceWords = [
     " homa ", " homam ", " puja ", " pooja ",
     " parayanam ", " parayana ", " abhishek ",
     " yagna ", " yajna ", " archana ",
   ];
-  // Also check if title ENDS with these (e.g. "Lakshmi Puja")
   const titleRaw = (product.title || "").toLowerCase().trim();
   const endsWithService = serviceWords.some(w => titleRaw.endsWith(w.trim()));
   const containsService = serviceWords.some(w => title.includes(w));
@@ -601,7 +596,6 @@ function setConnected(connected) {
   document.getElementById("mainUI").classList.toggle("hidden", !connected);
 }
 
-
 // ─── Products ─────────────────────────────────────────────────────────────────
 async function loadProducts() {
   try {
@@ -625,7 +619,6 @@ function onProductChange() {
   const svcBadge = document.getElementById("serviceBadge");
   if (!selectedProduct) { badge.style.display = "none"; warning.classList.add("hidden"); svcBadge.classList.add("hidden"); return; }
 
-  // Service badge
   if (isServiceProduct(selectedProduct)) {
     svcBadge.classList.remove("hidden");
   } else {
@@ -663,14 +656,12 @@ async function runAllAgents() {
   document.getElementById("sgeScoreWrap").classList.add("hidden");
   generatedFAQs = [];
 
-  // ── Detect product type ──
   const isService = isServiceProduct(selectedProduct);
   console.log(`Product type: ${isService ? "🛕 SERVICE" : "📿 BEAD/PRODUCT"}`);
 
-  // Update E-E-A-T badge
   document.getElementById("eeAtBadge").textContent = isService
     ? "✦ MVS Vedapadasala · Ghana Parayana · Kanchi Mutt VRNT · Feb 2026 Google E-E-A-T compliant"
-    : "✦ Intent-based E-E-A-T expression · No direct claims · Feb 2026 Google update compliant";
+    : "✦ Intent-based E-E-A-T expression · GMC-safe · No deity names in titles/headings · Feb 2026 Google update compliant";
 
   const before = scoreSEO(selectedProduct.metafields_global_title_tag, selectedProduct.metafields_global_description_tag, selectedProduct.tags, selectedProduct.body_html, isService);
   showScore("scoreBefore", before);
@@ -745,31 +736,51 @@ async function runAllAgents() {
     setAgent("tags",     "running", "Writing…");
     setAgent("faq",      "running", "Generating Q&As…");
 
-    // ── Branch prompts based on product type ──
+    // ── PATCHED: GMC-safe system prompts ──────────────────────────────────────
+
     const descSystem = isService
       ? `You are a Vedic services SEO expert for RudraKailash.com. Write service page descriptions. Rules: keyword in first <h2> and opening <p>; cite MVS Vedapadasala vadhyar credentials and Kanchi Mutt VRNT achievement; NEVER mention Rudraksha beads, RKRTL certification, or X-ray testing — this is a SERVICE not a physical product. Output clean HTML only. No markdown.`
-      : `You are a Rudraksha SEO expert for RudraKailash.com. Rules: keyword in first <h2> and first <p> within 100 words; E-E-A-T framing ("seekers describe…"); cite Elaeocarpus ganitrus botanical name; mention RKRTL as independent lab; zero direct health claims. MAX 4 lines prose per section — use <ul> bullets if more needed. MAX 550 words total. Output clean HTML only. No markdown.`;
+      : `You are a Rudraksha SEO expert for RudraKailash.com. Rules:
+- Keyword in first <h2> and first <p> within 100 words
+- E-E-A-T framing ("seekers describe…" / "seekers report…") — ZERO direct health or spiritual benefit claims
+- Cite Elaeocarpus ganitrus botanical name at least once
+- Mention RKRTL as independent X-ray authentication lab
+- MAX 4 lines prose per section — use <ul> bullets if more needed
+- MAX 550 words total
+- Output clean HTML only. No markdown.
+GMC IDENTITY & BELIEF POLICY RULES (critical — violations cause ad restrictions):
+- NEVER use deity names (Shiva, Vishnu, Ganesha, Hanuman, Lakshmi, Durga, Parvati, Brahma, Indra, etc.) in H1, H2, or H3 headings
+- NEVER use deity names in the opening paragraph (first <p> tag)
+- Deity associations belong ONLY inside body <ul> bullets, never in headings or opening prose
+- NEVER write direct spiritual benefit claims like "attracts wealth", "removes negativity", "pleases Lord Shiva", "blesses the wearer" — use "seekers report…" framing only
+- Position the product as a natural, scientifically authenticated seed bead — not a religious item
+- "Mala" in headings should be accompanied by material/size descriptors to read as jewelry, not prayer beads`;
 
     const descUser = isService
       ? `Write a concise SEO service page for "${selectedProduct.title}" by RudraKailash.com.\n\nSERVICE CONTEXT:\n- Performed by: MVS Vedapadasala vadhyars, Coimbatore\n- Ghana Parayana tradition\n- Vadhyars Bhadrinath, Akshai Jayaraman, Harish — 1st place in VRNT exam by Kanchi Mutt\n- Online service: customer books → vadhyars perform → video/photo documentation sent\n- Real padashaala, not studio\n\nSTRUCTURE:\n<h2>${selectedProduct.title} — Online Vedic Service by MVS Vedapadasala</h2>\n<p>[2–3 sentences: what this service is, who performs it, spiritual purpose]</p>\n<h3>Vedic Significance of ${selectedProduct.title}</h3>\n[MAX 4 lines: deity invoked, scriptural basis, spiritual purpose]\n<h3>What You Receive — Complete Inclusions</h3>\n<ul>[4–5 bullets: trained vadhyar performance, video/photo documentation, personalised sankalpa, date flexibility]</ul>\n<h3>Performed by MVS Vedapadasala — Authentic Coimbatore Vadhyars</h3>\n[2–3 lines: Ghana Parayana training, Kanchi Mutt VRNT 1st place achievement, real padashaala not studio]\n<h3>Who Should Book ${selectedProduct.title}</h3>\n<ul>[4–5 bullets: ideal devotee profiles]</ul>\n<h3>How to Book Your ${selectedProduct.title}</h3>\n<ul>[4 bullets: step-by-step booking process]</ul>\n<h3>Frequently Asked Questions</h3>\n<dl>[4 FAQs: how online service works, vadhyar credentials, what is delivered, booking/customisation]</dl>\n\n${kwPlacement}\n\nGAPS TO COVER: ${gapSummary}\nCURRENT DESCRIPTION: ${descPlain}\n\nOUTPUT: Clean HTML only, starting with <h2>. NO bead/RKRTL/X-ray language.`
-      : `Write a concise SEO product description for "${selectedProduct.title}" on RudraKailash.com.\n\nMAIN KEYWORD: ${selectedProduct.title}\n${isHalfMoon ? "SPECIAL NOTE: This is a South Indian Half Moon 1 Mukhi — NOT Nepali. Present this positively as the authentic, scripturally valid form available today.\n" : ""}\nSTRUCTURE:\n<h2>${selectedProduct.title} — Authentic RKRTL-Certified Rudraksha Bead</h2>\n<p>[2–3 sentences: keyword in first sentence, Nepal origin, seeker hook]</p>\n<h3>Spiritual Significance of ${selectedProduct.title} in Vedic Tradition</h3>\n[MAX 4 lines or <ul>: ruling deity, scripture, mantra, planet]\n<h3>What Seekers Describe About ${selectedProduct.title}</h3>\n<ul>[4–5 bullets: "Seekers report…" — NO direct claims]</ul>\n<h3>RKRTL Certification — Verified Authentic ${selectedProduct.title}</h3>\n[2–3 lines: X-ray imaging + microscopy, Elaeocarpus ganitrus confirmed, certificate with unique ID — no verification links]\n<h3>Who Should Buy ${selectedProduct.title}</h3>\n<ul>[4–5 bullets: seeker profiles]</ul>\n<h3>How to Wear Your ${selectedProduct.title}</h3>\n<ul>[4–5 bullets: day to begin, thread/metal, mantra, energisation]</ul>\n<h3>Frequently Asked Questions</h3>\n<dl>[4 FAQs: authenticity/certification, origin, who can wear it, value/quality]</dl>\n\n${kwPlacement}\n\nGAPS TO COVER: ${gapSummary}\nCURRENT DESCRIPTION: ${descPlain}\n\nOUTPUT: Clean HTML only, starting with <h2>.`;
+      : `Write a concise SEO product description for "${selectedProduct.title}" on RudraKailash.com.\n\nMAIN KEYWORD: ${selectedProduct.title}\n${isHalfMoon ? "SPECIAL NOTE: This is a South Indian Half Moon 1 Mukhi — NOT Nepali. Present this positively as the authentic, scripturally valid form available today.\n" : ""}\nSTRUCTURE (follow exactly — GMC rules apply to all headings and opening paragraph):\n<h2>${selectedProduct.title} — RKRTL-Certified | X-Ray Verified | Genuine Nepali Rudraksha</h2>\n<p>[2–3 sentences: keyword in first sentence, Nepal/Indonesian origin, bead size, RKRTL authentication — NO deity names here]</p>\n<h3>Vedic Tradition & Significance of ${selectedProduct.title}</h3>\n[MAX 4 lines or <ul>: scripture reference, mantra, planet association — NO deity name in the heading itself; deity name may appear once inside the bullet text only]\n<h3>What Seekers Describe About ${selectedProduct.title}</h3>\n<ul>[4–5 bullets: "Seekers report…" — NO direct claims, NO deity names]</ul>\n<h3>RKRTL Authentication — X-Ray Verified ${selectedProduct.title}</h3>\n[2–3 lines: X-ray imaging + microscopy, Elaeocarpus ganitrus confirmed, certificate with unique ID]\n<h3>Who Should Wear ${selectedProduct.title}</h3>\n<ul>[4–5 bullets: seeker profiles — describe by life situation, not by deity devotion]</ul>\n<h3>Wearing Guide — ${selectedProduct.title}</h3>\n<ul>[4–5 bullets: day to begin, thread/metal, mantra, energisation]</ul>\n<h3>Frequently Asked Questions</h3>\n<dl>[4 FAQs: authenticity/certification, origin, who can wear it, value/quality]</dl>\n\n${kwPlacement}\n\nGAPS TO COVER: ${gapSummary}\nCURRENT DESCRIPTION: ${descPlain}\n\nOUTPUT: Clean HTML only, starting with <h2>. Strictly follow GMC heading and opening paragraph rules above.`;
 
+    // ── PATCHED: GMC-safe meta title prompt ──────────────────────────────────
+    const titleUser = isService
+      ? `Meta title for the "${selectedProduct.title}" service on RudraKailash.com. Max 60 chars. Include service name + MVS Vedapadasala or Authentic Vedic + RudraKailash brand.`
+      : `Meta title for "${selectedProduct.title}" on RudraKailash.com. Max 60 chars. Include: main keyword (mukhi + Rudraksha) + RKRTL Certified or X-Ray Verified + RudraKailash. STRICT RULE: NO deity names (no Shiva, Vishnu, Ganesha, Hanuman, etc.) — keep it product-focused for Google Shopping compatibility. Format example: "5 Mukhi Rudraksha | RKRTL Certified | RudraKailash"`;
+
+    // ── PATCHED: GMC-safe meta description prompt ─────────────────────────────
     const metaDescUser = isService
       ? `Meta description for "${selectedProduct.title}" service on RudraKailash.com. 145–155 characters. Mention MVS Vedapadasala vadhyars, authentic Vedic tradition, booking CTA. Do NOT mention RKRTL.`
-      : `Meta description for "${selectedProduct.title}" on RudraKailash.com. 145–155 chars. Mention RKRTL certified + CTA.`;
+      : `Meta description for "${selectedProduct.title}" on RudraKailash.com. Exactly 145–155 characters. Structure: [bead size in mm + Nepali/Indonesian origin] + [RKRTL X-ray certified] + [unique benefit in neutral language] + [CTA: Shop/Buy/Order]. STRICT RULES: NO deity names. NO spiritual benefit claims like "attracts wealth" or "removes negativity". Position as a certified natural bead. Example structure: "Genuine 6mm Nepali 5 Mukhi Rudraksha, RKRTL X-ray certified for authenticity. Worn for clarity and calm. Buy authentic — RudraKailash."`;
 
     const tagsUser = isService
       ? `10–12 Shopify tags for the "${selectedProduct.title}" service on RudraKailash.com. Current: "${selectedProduct.tags||"none"}". Include: online puja, vedic service, MVS Vedapadasala, homa/puja type, coimbatore vadhyar, authentic vedic ritual, book online. No RKRTL tags.`
-      : `10–12 Shopify tags for "${selectedProduct.title}". Current: "${selectedProduct.tags||"none"}". Include mukhi variants, rudraksha, RKRTL, certified, authentic, spiritual terms.`;
+      : `10–12 Shopify tags for "${selectedProduct.title}". Current: "${selectedProduct.tags||"none"}". Include mukhi variants, rudraksha, RKRTL, certified, authentic, x-ray verified, nepali rudraksha or indonesian rudraksha as appropriate, bead bracelet, meditation beads. Avoid deity-specific tags that could trigger GMC identity and belief policy.`;
 
     const faqUser = isService
       ? `Generate 6 voice-search FAQ pairs for the "${selectedProduct.title}" service on RudraKailash.com.\n\nRules:\n- Natural spoken language questions\n- Answers under 50 words, self-contained, citation-ready\n- Include: what the service is, who performs it (MVS Vedapadasala), how online delivery works, credentials (Kanchi Mutt VRNT), who should book, how to book\n- NO RKRTL certification language — this is a service not a product\n\nOutput ONLY JSON: [{"q":"Question?","a":"Answer under 50 words."},...] 6 items.`
-      : `Generate 6 voice-search FAQ pairs for "${selectedProduct.title}" Rudraksha bead on RudraKailash.com.\n\nRules:\n- Natural spoken language questions\n- Answers under 50 words, self-contained, citation-ready\n- Include: what it is, who should wear it, how to wear it, RKRTL authentication, Vedic significance, buying advice\n- Experience-framing only, mention RKRTL certification\n\nOutput ONLY JSON: [{"q":"Question?","a":"Answer."},...] 6 items.`;
+      : `Generate 6 voice-search FAQ pairs for "${selectedProduct.title}" Rudraksha bead on RudraKailash.com.\n\nRules:\n- Natural spoken language questions\n- Answers under 50 words, self-contained, citation-ready\n- Include: what it is, who should wear it, how to wear it, RKRTL authentication process, botanical origin (Elaeocarpus ganitrus), buying advice\n- Use "seekers report" framing — no direct benefit claims\n- Mention RKRTL X-ray certification\n- Avoid leading with deity names in questions\n\nOutput ONLY JSON: [{"q":"Question?","a":"Answer."},...] 6 items.`;
 
     const [descResult, titleResult, metaDescResult, tagsResult, faqResult] = await Promise.allSettled([
       aiGenerate(descSystem, descUser, 4000),
-      aiGenerate(`SEO specialist. Output ONLY the meta title text. No quotes. No explanation.`,
-        `Meta title for "${selectedProduct.title}" on RudraKailash.com. Max 60 chars. Include main keyword + RudraKailash brand.`),
+      aiGenerate(`SEO specialist. Output ONLY the meta title text. No quotes. No explanation.`, titleUser),
       aiGenerate(`SEO specialist. Output ONLY the meta description text. No quotes. No explanation.`, metaDescUser),
       aiGenerate(`Shopify SEO expert. Output ONLY comma-separated tags. No explanation.`, tagsUser),
       aiGenerate(`Voice search SEO expert. Output ONLY valid JSON array. No markdown.`, faqUser, 1200),
