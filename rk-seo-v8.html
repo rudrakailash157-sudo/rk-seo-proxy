@@ -713,10 +713,24 @@ async function runAllAgents() {
         return `Competitor ${i+1} (${c.url}):\nH1: ${(headings.h1||[]).slice(0,3).join(" | ") || "none"}\nH2/H3: ${(headings.h2h3||[]).slice(0,6).join(" | ") || "none"}\nBody: ${(c.content||c.snippet||"").slice(0,400)}`;
       }).join("\n\n---\n\n");
 
-      const kwRaw = await aiGenerate(
+      // Keyword extraction with 25s timeout + 1 automatic retry
+      const kwCall = () => aiGenerate(
         `You are an SEO keyword analyst. Output ONLY valid JSON. No markdown. No explanation.`,
         `Extract SEO keywords from these ${competitors.length} competitor pages for "${selectedProduct.title}" on RudraKailash.com.\n\n${compHeadingInput}\n\nOutput ONLY:\n{"h1":["phrase1"],"h2h3":["phrase1"],"phrases":["phrase1"]}`, 800
       );
+      let kwRaw = "";
+      try {
+        kwRaw = await withTimeout(kwCall(), 25000, "Keyword extraction");
+      } catch(e1) {
+        console.warn("Keyword extraction attempt 1 failed:", e1.message, "— retrying…");
+        setAgent("keywords", "running", "Retrying keywords…");
+        try {
+          kwRaw = await withTimeout(kwCall(), 25000, "Keyword extraction retry");
+        } catch(e2) {
+          console.warn("Keyword extraction attempt 2 failed:", e2.message, "— continuing without keywords");
+          kwRaw = "";
+        }
+      }
       try { extractedKeywords = JSON.parse(kwRaw.replace(/^```json\s*/i,"").replace(/\s*```$/,"").trim()); } catch(e) {}
     }
     renderKeywords(extractedKeywords);
@@ -873,6 +887,14 @@ async function aiGenerate(system, user, max_tokens = 1200) {
   const data = await res.json();
   if (!data.success) throw new Error(data.error || "AI failed");
   return data.text;
+}
+
+// Wraps any promise with a timeout — rejects after ms milliseconds
+function withTimeout(promise, ms, label = "Operation") {
+  const timeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error(`${label} timed out after ${ms/1000}s`)), ms)
+  );
+  return Promise.race([promise, timeout]);
 }
 
 function cleanHTML(text) { return text.replace(/^```(?:html)?\s*/i,"").replace(/\s*```\s*$/,"").trim(); }
