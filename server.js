@@ -7,7 +7,6 @@ const path       = require("path");
 const cron       = require("node-cron");
 const nodemailer = require("nodemailer");
 
-// ─── Audit module (safe load — won't crash SEO server if audit fails) ─────────
 let auditModule = null;
 try {
   auditModule = require("./audit/index");
@@ -19,7 +18,6 @@ try {
 const app  = express();
 const PORT = process.env.PORT || 3001;
 
-// ─── Token persistence ────────────────────────────────────────────────────────
 const TOKEN_FILE      = path.join(__dirname, ".shopify_token");
 const RANK_DATA_FILE  = path.join(__dirname, ".rank_data.json");
 const KEYWORDS_FILE   = path.join(__dirname, ".keywords.json");
@@ -39,7 +37,6 @@ function saveToken(token) {
   catch (e) { console.warn("⚠️  Token save error:", e.message); }
 }
 
-// ─── Rank data helpers ────────────────────────────────────────────────────────
 function loadRankData() {
   try {
     if (fs.existsSync(RANK_DATA_FILE)) return JSON.parse(fs.readFileSync(RANK_DATA_FILE, "utf8"));
@@ -64,7 +61,6 @@ function saveKeywords(data) {
   catch (e) { console.warn("⚠️  Keywords save error:", e.message); }
 }
 
-// ─── Config ───────────────────────────────────────────────────────────────────
 const SHOPIFY_CLIENT_ID     = process.env.SHOPIFY_CLIENT_ID;
 const SHOPIFY_CLIENT_SECRET = process.env.SHOPIFY_CLIENT_SECRET;
 const SHOPIFY_STORE_DOMAIN  = process.env.SHOPIFY_STORE_DOMAIN;
@@ -79,7 +75,6 @@ function generateApprovalToken() {
   return Math.random().toString(36).substring(2) + Date.now().toString(36);
 }
 
-// ─── Middleware ───────────────────────────────────────────────────────────────
 app.use(cors({
   origin: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -89,7 +84,6 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Register audit module only if it loaded successfully
 if (auditModule && typeof auditModule.register === "function") {
   auditModule.register(app);
   console.log("✅ Audit routes registered");
@@ -97,12 +91,10 @@ if (auditModule && typeof auditModule.register === "function") {
   console.warn("⚠️  Audit routes not registered — /audit endpoint unavailable");
 }
 
-// ─── Serve SEO tool ───────────────────────────────────────────────────────────
 app.get("/seo", (req, res) => {
   res.sendFile(path.join(__dirname, "rk-seo-v8.html"));
 });
 
-// ─── Email transporter ────────────────────────────────────────────────────────
 const transporter = nodemailer.createTransport({
   host:   process.env.EMAIL_SMTP_HOST || "smtp.hostinger.com",
   port:   parseInt(process.env.EMAIL_SMTP_PORT || "465"),
@@ -121,7 +113,6 @@ async function sendEmail(subject, htmlBody) {
   } catch (e) { console.error("❌ Email failed:", e.message); }
 }
 
-// ─── Health check ─────────────────────────────────────────────────────────────
 app.get("/", (req, res) => {
   const rankData     = loadRankData();
   const keywords     = loadKeywords();
@@ -141,7 +132,6 @@ app.get("/", (req, res) => {
   });
 });
 
-// ─── OAuth ────────────────────────────────────────────────────────────────────
 app.get("/auth/install", (req, res) => {
   const scopes      = "read_products,write_products,read_product_listings";
   const redirectUri = `${APP_URL}/auth/callback`;
@@ -162,12 +152,7 @@ app.get("/auth/callback", async (req, res) => {
       storedAccessToken = tokenData.access_token;
       saveToken(storedAccessToken);
       await registerWebhooks();
-      res.send(`<html><body style="font-family:sans-serif;background:#0D0500;color:#F5E6C8;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
-        <div style="text-align:center;padding:40px;border:1px solid #D4A017;border-radius:12px;background:#1A0A00;">
-          <div style="font-size:48px;margin-bottom:16px;">✅</div>
-          <h2 style="color:#F0C84A;margin-bottom:8px;">Connected!</h2>
-          <p style="color:#9A7050;">Store linked · Token saved · Webhooks registered · Rank tracking active</p>
-        </div></body></html>`);
+      res.send(`<html><body style="font-family:sans-serif;background:#0D0500;color:#F5E6C8;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;"><div style="text-align:center;padding:40px;border:1px solid #D4A017;border-radius:12px;background:#1A0A00;"><div style="font-size:48px;margin-bottom:16px;">✅</div><h2 style="color:#F0C84A;margin-bottom:8px;">Connected!</h2><p style="color:#9A7050;">Store linked · Token saved · Webhooks registered · Rank tracking active</p></div></body></html>`);
     } else res.status(400).json({ error: "Failed to get access token", details: tokenData });
   } catch (err) { res.status(500).json({ error: "OAuth failed", message: err.message }); }
 });
@@ -185,7 +170,6 @@ app.get("/auth/token", (req, res) => {
   res.json({ token: storedAccessToken });
 });
 
-// ─── Products ─────────────────────────────────────────────────────────────────
 app.get("/products", async (req, res) => {
   if (!storedAccessToken) return res.status(401).json({ error: "Not authenticated" });
   try {
@@ -217,7 +201,6 @@ app.put("/products/:id", async (req, res) => {
   } catch (err) { res.status(500).json({ error: "Failed to update product", message: err.message }); }
 });
 
-// ─── AI generate ──────────────────────────────────────────────────────────────
 app.post("/ai/generate", async (req, res) => {
   const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
   if (!ANTHROPIC_KEY) return res.status(500).json({ error: "ANTHROPIC_API_KEY not configured" });
@@ -225,17 +208,8 @@ app.post("/ai/generate", async (req, res) => {
     const { system, user, max_tokens = 1200 } = req.body;
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": ANTHROPIC_KEY.trim(),
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens,
-        system,
-        messages: [{ role: "user", content: user }],
-      }),
+      headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_KEY.trim(), "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens, system, messages: [{ role: "user", content: user }] }),
     });
     const data = await response.json();
     if (!response.ok) return res.status(response.status).json({ error: "Anthropic error", details: data });
@@ -243,7 +217,6 @@ app.post("/ai/generate", async (req, res) => {
   } catch (err) { res.status(500).json({ error: "AI failed", message: err.message }); }
 });
 
-// ─── Competitor research ──────────────────────────────────────────────────────
 const MARKETPLACE_DOMAINS = [
   "amazon.","flipkart.","snapdeal.","meesho.","myntra.","indiamart.",
   "alibaba.","ebay.","etsy.","walmart.","paytmmall.","shopclues.",
@@ -256,24 +229,14 @@ function isMarketplace(url) {
 
 function extractTextFromHTML(html) {
   const h1Matches = [...html.matchAll(/<h1[^>]*>([\s\S]*?)<\/h1>/gi)];
-  const h1s = h1Matches
-    .map(m => m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim())
-    .filter(Boolean).slice(0, 5);
-
+  const h1s = h1Matches.map(m => m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim()).filter(Boolean).slice(0, 5);
   const h2h3Matches = [...html.matchAll(/<h[23][^>]*>([\s\S]*?)<\/h[23]>/gi)];
-  const h2h3s = h2h3Matches
-    .map(m => m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim())
-    .filter(Boolean).slice(0, 12);
-
+  const h2h3s = h2h3Matches.map(m => m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim()).filter(Boolean).slice(0, 12);
   const bodyText = html
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<style[\s\S]*?<\/style>/gi, "")
-    .replace(/<nav[\s\S]*?<\/nav>/gi, "")
-    .replace(/<footer[\s\S]*?<\/footer>/gi, "")
-    .replace(/<header[\s\S]*?<\/header>/gi, "")
-    .replace(/<[^>]+>/g, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, "").replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<nav[\s\S]*?<\/nav>/gi, "").replace(/<footer[\s\S]*?<\/footer>/gi, "")
+    .replace(/<header[\s\S]*?<\/header>/gi, "").replace(/<[^>]+>/g, " ")
     .replace(/\s+/g, " ").trim().slice(0, 3000);
-
   return { text: bodyText, headings: { h1: h1s, h2h3: h2h3s } };
 }
 
@@ -281,10 +244,7 @@ async function fetchPageText(url) {
   try {
     const controller = new AbortController();
     const timeout    = setTimeout(() => controller.abort(), 8000);
-    const res        = await fetch(url, {
-      signal: controller.signal,
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; RudraKailashSEOBot/1.0)", "Accept": "text/html" },
-    });
+    const res        = await fetch(url, { signal: controller.signal, headers: { "User-Agent": "Mozilla/5.0 (compatible; RudraKailashSEOBot/1.0)", "Accept": "text/html" } });
     clearTimeout(timeout);
     if (!res.ok) return null;
     return extractTextFromHTML(await res.text());
@@ -294,28 +254,18 @@ async function fetchPageText(url) {
 async function runCompetitorResearch(productTitle) {
   const SERPER_KEY = process.env.SERPER_API_KEY;
   if (!SERPER_KEY) return [];
-
-  const coreTitle = productTitle
-    .replace(/\s*(bracelet|mala|pendant|ring|set|combo|pack|pair)\s*$/i, "").trim();
-
+  const coreTitle = productTitle.replace(/\s*(bracelet|mala|pendant|ring|set|combo|pack|pair)\s*$/i, "").trim();
   const queries = [
     `${coreTitle} benefits significance`,
     `${coreTitle} Shiva Purana Vedic meaning`,
     `${coreTitle} certification authentic`,
     `${coreTitle}`,
   ];
-
   try {
-    const seenUrls   = new Set();
-    const allResults = [];
-
+    const seenUrls = new Set(), allResults = [];
     for (const query of queries) {
       if (allResults.length >= 12) break;
-      const serperRes  = await fetch("https://google.serper.dev/search", {
-        method: "POST",
-        headers: { "X-API-KEY": SERPER_KEY, "Content-Type": "application/json" },
-        body: JSON.stringify({ q: query, gl: "in", hl: "en", num: 10 }),
-      });
+      const serperRes  = await fetch("https://google.serper.dev/search", { method: "POST", headers: { "X-API-KEY": SERPER_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ q: query, gl: "in", hl: "en", num: 10 }) });
       const serperData = await serperRes.json();
       for (const result of (serperData.organic || [])) {
         const url = result.link || "";
@@ -325,17 +275,11 @@ async function runCompetitorResearch(productTitle) {
         }
       }
     }
-
     console.log(`🔍 Competitor candidates for "${productTitle}": ${allResults.length}`);
     const competitors = [];
     for (const result of allResults.slice(0, 10)) {
       const extracted = await fetchPageText(result.url);
-      competitors.push({
-        ...result,
-        content:  extracted ? extracted.text     : result.snippet,
-        headings: extracted ? extracted.headings : { h1: [], h2h3: [] },
-        fetched:  !!extracted,
-      });
+      competitors.push({ ...result, content: extracted ? extracted.text : result.snippet, headings: extracted ? extracted.headings : { h1: [], h2h3: [] }, fetched: !!extracted });
     }
     console.log(`🔍 Fetched: ${competitors.filter(c => c.fetched).length}/${competitors.length}`);
     return competitors;
@@ -351,18 +295,13 @@ app.post("/competitor/research", async (req, res) => {
   } catch (err) { res.status(500).json({ error: "Research failed", message: err.message }); }
 });
 
-// ─── RANK TRACKING ────────────────────────────────────────────────────────────
 function autoKeyword(productTitle) { return `${productTitle} buy online`; }
 
 async function checkRankPosition(keyword, gl = "in") {
   const SERPER_KEY = process.env.SERPER_API_KEY;
   if (!SERPER_KEY) return null;
   try {
-    const serperRes  = await fetch("https://google.serper.dev/search", {
-      method: "POST",
-      headers: { "X-API-KEY": SERPER_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ q: keyword, gl, hl: "en", num: 100 }),
-    });
+    const serperRes  = await fetch("https://google.serper.dev/search", { method: "POST", headers: { "X-API-KEY": SERPER_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ q: keyword, gl, hl: "en", num: 100 }) });
     const serperData = await serperRes.json();
     const organic    = serperData.organic || [];
     for (let i = 0; i < organic.length; i++) {
@@ -418,7 +357,6 @@ async function checkAndStoreRank(entry) {
   return { posIN, posGlobal };
 }
 
-// Daily rank check: 6am IST = 00:30 UTC
 cron.schedule("30 0 * * *", async () => {
   console.log("📊 Daily rank check — 6am IST");
   const keywords = loadKeywords();
@@ -428,77 +366,27 @@ cron.schedule("30 0 * * *", async () => {
   console.log("📊 Daily rank check complete.");
 }, { timezone: "UTC" });
 
-// Weekly rank report: Monday 7am IST = Monday 01:30 UTC
 cron.schedule("30 1 * * 1", async () => {
   console.log("📊 Weekly rank report — Monday 7am IST");
   const rankData = loadRankData();
   const entries  = Object.values(rankData);
   if (entries.length === 0) return;
-
   const rows = entries.map(entry => {
-    const history   = entry.history || [];
-    const latest    = history[history.length - 1];
-    const prev      = history[history.length - 8];
-    const posIN     = latest?.posIN     || null;
-    const posGlobal = latest?.posGlobal || null;
-    const prevIN    = prev?.posIN       || null;
-    const deltaIN   = prevIN && posIN ? prevIN - posIN : null;
-    const trend     = deltaIN === null ? "—" : deltaIN > 0 ? `▲ ${deltaIN}` : deltaIN < 0 ? `▼ ${Math.abs(deltaIN)}` : "→ same";
+    const history = entry.history || [], latest = history[history.length - 1], prev = history[history.length - 8];
+    const posIN = latest?.posIN || null, posGlobal = latest?.posGlobal || null, prevIN = prev?.posIN || null;
+    const deltaIN = prevIN && posIN ? prevIN - posIN : null;
+    const trend = deltaIN === null ? "—" : deltaIN > 0 ? `▲ ${deltaIN}` : deltaIN < 0 ? `▼ ${Math.abs(deltaIN)}` : "→ same";
     return { title: entry.productTitle, keyword: entry.keyword, posIN, posGlobal, trend, deltaIN };
   });
   rows.sort((a, b) => (b.deltaIN || 0) - (a.deltaIN || 0));
-
-  const tableRows = rows.map(r => `
-    <tr style="border-bottom:1px solid #2E1500">
-      <td style="padding:10px 14px;color:#F5E6C8;font-size:13px">${r.title}</td>
-      <td style="padding:10px 14px;color:#9A7050;font-size:11px">${r.keyword}</td>
-      <td style="padding:10px 14px;text-align:center;color:${r.posIN ? '#7FD48A' : '#9A7050'};font-weight:bold">${r.posIN ? '#' + r.posIN : 'Not found'}</td>
-      <td style="padding:10px 14px;text-align:center;color:${r.posGlobal ? '#80C0F0' : '#9A7050'};font-weight:bold">${r.posGlobal ? '#' + r.posGlobal : 'Not found'}</td>
-      <td style="padding:10px 14px;text-align:center;color:${r.deltaIN > 0 ? '#7FD48A' : r.deltaIN < 0 ? '#F08080' : '#9A7050'};font-weight:bold">${r.trend}</td>
-    </tr>`).join("");
-
-  const inTop10  = rows.filter(r => r.posIN && r.posIN <= 10).length;
-  const inTop50  = rows.filter(r => r.posIN && r.posIN <= 50).length;
-  const improved = rows.filter(r => r.deltaIN > 0).length;
-
-  const emailHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8"/></head>
-<body style="margin:0;padding:0;background:#0D0500;font-family:Georgia,serif">
-<div style="max-width:720px;margin:0 auto;padding:32px 20px">
-  <div style="text-align:center;margin-bottom:32px">
-    <div style="font-size:36px">ॐ</div>
-    <h1 style="color:#F0C84A;font-size:22px;margin:8px 0">RudraKailash SEO — Weekly Rank Report</h1>
-    <p style="color:#9A7050;font-size:13px">${new Date().toLocaleString("en-IN",{timeZone:"Asia/Kolkata"})} IST</p>
-  </div>
-  <div style="background:#1A0A00;border:1px solid #2E1500;border-radius:10px;padding:20px;margin-bottom:24px">
-    <table width="100%"><tr>
-      <td style="text-align:center"><div style="color:#9A7050;font-size:11px;letter-spacing:1px">TRACKED</div><div style="color:#F0C84A;font-size:28px;font-weight:bold">${entries.length}</div></td>
-      <td style="text-align:center"><div style="color:#9A7050;font-size:11px;letter-spacing:1px">TOP 10 (IN)</div><div style="color:#7FD48A;font-size:28px;font-weight:bold">${inTop10}</div></td>
-      <td style="text-align:center"><div style="color:#9A7050;font-size:11px;letter-spacing:1px">TOP 50 (IN)</div><div style="color:#80C0F0;font-size:28px;font-weight:bold">${inTop50}</div></td>
-      <td style="text-align:center"><div style="color:#9A7050;font-size:11px;letter-spacing:1px">IMPROVED</div><div style="color:#7FD48A;font-size:28px;font-weight:bold">${improved}</div></td>
-    </tr></table>
-  </div>
-  <table style="width:100%;border-collapse:collapse;background:#120600;border:1px solid #2E1500;border-radius:10px;overflow:hidden">
-    <thead><tr style="background:#160800">
-      <th style="padding:10px 14px;text-align:left;color:#9A7050;font-size:11px;font-weight:normal">PRODUCT</th>
-      <th style="padding:10px 14px;text-align:left;color:#9A7050;font-size:11px;font-weight:normal">KEYWORD</th>
-      <th style="padding:10px 14px;text-align:center;color:#9A7050;font-size:11px;font-weight:normal">GOOGLE.CO.IN</th>
-      <th style="padding:10px 14px;text-align:center;color:#9A7050;font-size:11px;font-weight:normal">GOOGLE.COM</th>
-      <th style="padding:10px 14px;text-align:center;color:#9A7050;font-size:11px;font-weight:normal">7-DAY TREND</th>
-    </tr></thead>
-    <tbody>${tableRows}</tbody>
-  </table>
-  <div style="text-align:center;margin-top:32px;border-top:1px solid #2E1500;padding-top:20px">
-    <p style="color:#5A3020;font-size:11px">RudraKailash Agentic SEO · Daily tracking at 6am IST · Weekly report every Monday</p>
-  </div>
-</div></body></html>`;
-
+  const tableRows = rows.map(r => `<tr style="border-bottom:1px solid #2E1500"><td style="padding:10px 14px;color:#F5E6C8;font-size:13px">${r.title}</td><td style="padding:10px 14px;color:#9A7050;font-size:11px">${r.keyword}</td><td style="padding:10px 14px;text-align:center;color:${r.posIN ? '#7FD48A' : '#9A7050'};font-weight:bold">${r.posIN ? '#' + r.posIN : 'Not found'}</td><td style="padding:10px 14px;text-align:center;color:${r.posGlobal ? '#80C0F0' : '#9A7050'};font-weight:bold">${r.posGlobal ? '#' + r.posGlobal : 'Not found'}</td><td style="padding:10px 14px;text-align:center;color:${r.deltaIN > 0 ? '#7FD48A' : r.deltaIN < 0 ? '#F08080' : '#9A7050'};font-weight:bold">${r.trend}</td></tr>`).join("");
+  const inTop10 = rows.filter(r => r.posIN && r.posIN <= 10).length, inTop50 = rows.filter(r => r.posIN && r.posIN <= 50).length, improved = rows.filter(r => r.deltaIN > 0).length;
+  const emailHtml = `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#0D0500;font-family:Georgia,serif"><div style="max-width:720px;margin:0 auto;padding:32px 20px"><div style="text-align:center;margin-bottom:32px"><div style="font-size:36px">ॐ</div><h1 style="color:#F0C84A;font-size:22px;margin:8px 0">RudraKailash SEO — Weekly Rank Report</h1><p style="color:#9A7050;font-size:13px">${new Date().toLocaleString("en-IN",{timeZone:"Asia/Kolkata"})} IST</p></div><div style="background:#1A0A00;border:1px solid #2E1500;border-radius:10px;padding:20px;margin-bottom:24px"><table width="100%"><tr><td style="text-align:center"><div style="color:#9A7050;font-size:11px;letter-spacing:1px">TRACKED</div><div style="color:#F0C84A;font-size:28px;font-weight:bold">${entries.length}</div></td><td style="text-align:center"><div style="color:#9A7050;font-size:11px;letter-spacing:1px">TOP 10 (IN)</div><div style="color:#7FD48A;font-size:28px;font-weight:bold">${inTop10}</div></td><td style="text-align:center"><div style="color:#9A7050;font-size:11px;letter-spacing:1px">TOP 50 (IN)</div><div style="color:#80C0F0;font-size:28px;font-weight:bold">${inTop50}</div></td><td style="text-align:center"><div style="color:#9A7050;font-size:11px;letter-spacing:1px">IMPROVED</div><div style="color:#7FD48A;font-size:28px;font-weight:bold">${improved}</div></td></tr></table></div><table style="width:100%;border-collapse:collapse;background:#120600;border:1px solid #2E1500;border-radius:10px;overflow:hidden"><thead><tr style="background:#160800"><th style="padding:10px 14px;text-align:left;color:#9A7050;font-size:11px;font-weight:normal">PRODUCT</th><th style="padding:10px 14px;text-align:left;color:#9A7050;font-size:11px;font-weight:normal">KEYWORD</th><th style="padding:10px 14px;text-align:center;color:#9A7050;font-size:11px;font-weight:normal">GOOGLE.CO.IN</th><th style="padding:10px 14px;text-align:center;color:#9A7050;font-size:11px;font-weight:normal">GOOGLE.COM</th><th style="padding:10px 14px;text-align:center;color:#9A7050;font-size:11px;font-weight:normal">7-DAY TREND</th></tr></thead><tbody>${tableRows}</tbody></table><div style="text-align:center;margin-top:32px;border-top:1px solid #2E1500;padding-top:20px"><p style="color:#5A3020;font-size:11px">RudraKailash Agentic SEO · Daily tracking at 6am IST · Weekly report every Monday</p></div></div></body></html>`;
   await sendEmail(`📊 RudraKailash Weekly Rank Report — ${new Date().toLocaleDateString("en-IN")}`, emailHtml);
   console.log("📊 Weekly rank report sent.");
 }, { timezone: "UTC" });
 
 // ─── Service product detection ────────────────────────────────────────────────
-// Returns true for homa, puja, parayanam and other Vedic service products
-// These get a different SEO prompt — no RKRTL/bead language
 function isServiceProduct(product) {
   const title = (product.title || "").toLowerCase();
   const tags  = (product.tags  || "").toLowerCase();
@@ -509,9 +397,22 @@ function isServiceProduct(product) {
     "vedic fire", "online puja", "online homa", "rudra abhishek",
     "sundara kanda", "vishnu sahasranama", "kanda parayanam",
   ];
-  return serviceKeywords.some(kw =>
-    title.includes(kw) || tags.includes(kw) || body.includes(kw)
-  );
+  return serviceKeywords.some(kw => title.includes(kw) || tags.includes(kw) || body.includes(kw));
+}
+
+// ─── Karungali product detection ─────────────────────────────────────────────
+// Returns true for Karungali (Ebony) wood products — NOT Rudraksha beads
+// These get wood-authentication content, NOT RKRTL X-ray language
+function isKarungaliProduct(product) {
+  const title = (product.title || "").toLowerCase();
+  const tags  = (product.tags  || "").toLowerCase();
+  const body  = (product.body_html || "").toLowerCase().slice(0, 300);
+  const karungaliKeywords = [
+    "karungali", "karungal", "ebony", "ebony wood", "ebony mala",
+    "ebony bracelet", "karungali mala", "karungali bracelet",
+    "diospyros ebenum", "karungali kattai",
+  ];
+  return karungaliKeywords.some(kw => title.includes(kw) || tags.includes(kw) || body.includes(kw));
 }
 
 // ─── SEO Pipeline ─────────────────────────────────────────────────────────────
@@ -531,17 +432,30 @@ async function callClaude(system, user, max_tokens = 1200) {
   return cleanAIOutput(data.content?.map(b => b.text || "").join("") || "");
 }
 
-function scoreSEO(metaTitle, metaDesc, tags, desc, isService = false) {
+// ─── scoreSEO — Karungali-aware ───────────────────────────────────────────────
+function scoreSEO(metaTitle, metaDesc, tags, desc, isService = false, isKarungali = false) {
   const titleLen = (metaTitle||"").length, descLen = (metaDesc||"").length;
   const tagCount = (tags||"").split(",").filter(Boolean).length;
   const descText = (desc||"").replace(/<[^>]+>/g, "");
+
+  let certCheck, descCertCheck;
+  if (isService) {
+    certCheck     = /vedic|puja|homa|vadhyar|mvs/i.test(tags||"");
+    descCertCheck = /mvs|vedapadasala|vadhyar|kanchi/i.test(descText);
+  } else if (isKarungali) {
+    certCheck     = /karungali|ebony|wood|certified|authentic/i.test(tags||"");
+    descCertCheck = /karungali|ebony|diospyros|authentic|wood/i.test(descText);
+  } else {
+    certCheck     = /rkrtl|certified|authentic/i.test(tags||"");
+    descCertCheck = /rkrtl|certified|x-ray/i.test(descText);
+  }
+
   const checks = [
     titleLen>0, titleLen>=40&&titleLen<=60, /(rudrakailash)/i.test(metaTitle||""),
     descLen>0, descLen>=130&&descLen<=155, /shop|buy|order|get|explore|book/i.test(metaDesc||""),
-    tagCount>0, tagCount>=6,
-    isService ? /vedic|puja|homa|vadhyar|mvs/i.test(tags||"") : /rkrtl|certified|authentic/i.test(tags||""),
+    tagCount>0, tagCount>=6, certCheck,
     descText.length>100, descText.split(/\s+/).length>=300, /<h[23]/i.test(desc||""),
-    isService ? /mvs|vedapadasala|vadhyar|kanchi/i.test(descText) : /rkrtl|certified|x-ray/i.test(descText),
+    descCertCheck,
   ];
   const pts = [10,10,5,10,10,5,5,8,7,10,10,5,5];
   return Math.round(checks.reduce((s,c,i) => s+(c?pts[i]:0), 0) / pts.reduce((s,p) => s+p, 0) * 100);
@@ -549,13 +463,13 @@ function scoreSEO(metaTitle, metaDesc, tags, desc, isService = false) {
 
 async function runSEOPipeline(product) {
   console.log(`🤖 SEO pipeline: ${product.title}`);
-  const isService  = isServiceProduct(product);
-  if (isService) console.log(`🛕 Detected as SERVICE product — using service prompt`);
+  const isService   = isServiceProduct(product);
+  const isKarungali = !isService && isKarungaliProduct(product);
+  if (isService)   console.log(`🛕 Detected as SERVICE product — using service prompt`);
+  if (isKarungali) console.log(`🪵 Detected as KARUNGALI product — using wood auth prompt`);
+
   const descPlain   = (product.body_html||"").replace(/<[^>]+>/g,"").slice(0,400);
   const competitors = await runCompetitorResearch(product.title);
-  const compSummary = competitors.length > 0
-    ? `Top ${competitors.length} competitors: ${competitors.map(c=>c.title).join(", ")}`
-    : "No competitor data.";
 
   let extractedKeywords = { h1: [], h2h3: [], phrases: [] };
   let keywordBrief = "";
@@ -574,17 +488,16 @@ async function runSEOPipeline(product) {
         `You are an SEO keyword analyst. Output ONLY valid JSON. No markdown. No explanation.`,
         `Extract SEO keywords from these ${competitors.length} competitor pages for "${product.title}" on RudraKailash.com.\n\n${compHeadingInput}\n\nExtract:\n1. h1Keywords: Primary keywords from competitor H1 tags (max 8, exact phrases)\n2. h2h3Keywords: Sub-topic LSI keywords from H2/H3 headings (max 12, exact phrases)\n3. intentPhrases: Recurring long-tail intent phrases from body text across 2+ competitors (max 10)\n\nOutput ONLY:\n{"h1":["phrase1"],"h2h3":["phrase1"],"phrases":["phrase1"]}`, 800
       );
-
       try {
         const kw = JSON.parse(kwRaw.replace(/^```json\s*/i,"").replace(/\s*```$/,"").trim());
         extractedKeywords = { h1: kw.h1||[], h2h3: kw.h2h3||[], phrases: kw.phrases||[] };
-        const h1List     = extractedKeywords.h1.slice(0, 5).join(" / ");
-        const h2h3List   = extractedKeywords.h2h3.slice(0, 8).join(", ");
-        const phraseList = extractedKeywords.phrases.slice(0, 8).join(", ");
+        const h1List = extractedKeywords.h1.slice(0,5).join(" / ");
+        const h2h3List = extractedKeywords.h2h3.slice(0,8).join(", ");
+        const phraseList = extractedKeywords.phrases.slice(0,8).join(", ");
         keywordBrief = [
-          h1List    ? `H1 PRIMARY KEYWORDS (use in <h2> and opening <p>): ${h1List}` : "",
-          h2h3List  ? `H2/H3 SUB-TOPIC KEYWORDS (use as or inside <h3> headings — naturally, not forced): ${h2h3List}` : "",
-          phraseList? `LONG-TAIL INTENT PHRASES (weave into bullets and FAQ questions): ${phraseList}` : "",
+          h1List     ? `H1 PRIMARY KEYWORDS (use in <h2> and opening <p>): ${h1List}` : "",
+          h2h3List   ? `H2/H3 SUB-TOPIC KEYWORDS (use as or inside <h3> headings — naturally, not forced): ${h2h3List}` : "",
+          phraseList ? `LONG-TAIL INTENT PHRASES (weave into bullets and FAQ questions): ${phraseList}` : "",
         ].filter(Boolean).join("\n");
       } catch(e) { console.warn("Keyword JSON parse failed:", e.message); keywordBrief = ""; }
     } catch(e) { console.warn("Keyword extraction failed:", e.message); }
@@ -593,13 +506,8 @@ async function runSEOPipeline(product) {
   let gapSummary = "Cover all key topics comprehensively.";
   if (competitors.length > 0) {
     try {
-      const compTexts = competitors.map((c,i) =>
-        `Competitor ${i+1} (${c.url}):\n${(c.content||c.snippet).slice(0,500)}`
-      ).join("\n\n---\n\n");
-      const gapRaw = await callClaude(
-        `SEO strategist. Output ONLY JSON array of gap strings.`,
-        `Product: "${product.title}". Our: "${descPlain}". Competitors:\n${compTexts}\nIdentify 5-8 gaps. Output ONLY JSON array.`, 700
-      );
+      const compTexts = competitors.map((c,i) => `Competitor ${i+1} (${c.url}):\n${(c.content||c.snippet).slice(0,500)}`).join("\n\n---\n\n");
+      const gapRaw = await callClaude(`SEO strategist. Output ONLY JSON array of gap strings.`, `Product: "${product.title}". Our: "${descPlain}". Competitors:\n${compTexts}\nIdentify 5-8 gaps. Output ONLY JSON array.`, 700);
       try {
         const gaps = JSON.parse(gapRaw.replace(/^```json\s*/i,"").replace(/\s*```$/,"").trim());
         gapSummary = `Fill: ${gaps.join("; ")}`;
@@ -610,28 +518,39 @@ async function runSEOPipeline(product) {
   const isHalfMoon = /half.?moon|1\s*mukhi/i.test(product.title);
   const kwPlacementInstructions = keywordBrief
     ? `MANDATORY KEYWORD PLACEMENT:\n${keywordBrief}\n\nPLACEMENT RULES:\n- <h2>: Must contain one of the H1 PRIMARY KEYWORDS\n- Opening <p>: Naturally include the primary H1 keyword within first 60 words\n- <h3> headings: Use H2/H3 SUB-TOPIC KEYWORDS as heading phrases where they fit\n- Bullets: Address LONG-TAIL INTENT PHRASES as seeker experience\n- FAQ: Word at least 2 questions using the exact phrasing of LONG-TAIL INTENT phrases`
-    : `KEYWORD GUIDANCE: Use standard Rudraksha SEO keywords appropriate to this product.`;
+    : `KEYWORD GUIDANCE: Use standard SEO keywords appropriate to this product.`;
 
-  // ── Build description prompt — branch on product type ──────────────────────
+  // ── Description system prompt — three-way branch ──────────────────────────
   const descSystem = isService
     ? `You are a Vedic services SEO expert writing concise service page descriptions for RudraKailash.com. Rules: (1) SEO — keyword in first <h2> and opening <p>; (2) E-E-A-T — cite vadhyar credentials, MVS Vedapadasala, Kanchi Mutt VRNT achievement; (3) NO Rudraksha bead language, NO RKRTL certification, NO X-ray testing references — this is a SERVICE not a product. Output clean HTML only. No markdown. No preamble.`
+    : isKarungali
+    ? `You are a sacred wood jewellery SEO expert writing concise product descriptions for RudraKailash.com. Rules: (1) SEO — keyword in first <h2> and opening <p> within 100 words; (2) E-E-A-T — botanical name Diospyros ebenum, Shaiva Siddhanta tradition, Tamil Nadu heritage, wood grain authentication; (3) STRICT — NO X-ray testing, NO RKRTL certification language, NO Elaeocarpus ganitrus — Karungali is authenticated by botanical species, wood density, and grain pattern, NOT X-ray imaging. LENGTH RULE: Each section MAX 4 lines. Use <ul> if more. Under 600 words. Output clean HTML only. No markdown. No preamble.`
     : `You are a Rudraksha SEO expert writing concise, scannable product descriptions for RudraKailash.com. Rules: (1) SEO — keyword in first <h2>, keyword in first <p> within 100 words, 1–2% density, LSI keywords in every <h3>, no stuffing; (2) E-E-A-T — experience framing ("seekers describe…"), Vedic scripture citations, Elaeocarpus ganitrus botanical name, RKRTL as independent lab, zero direct health/benefit claims; (3) Feb 2026 Google Discover — original perspective, depth, clear non-clickbait headings, Indian audience. LENGTH RULE: Each section MAX 4 lines of prose. If a section needs more than 4 lines, use a <ul> bullet list instead of a paragraph. Keep total description under 600 words. Output clean HTML only. No markdown. No preamble.`;
 
+  // ── Description user prompt — three-way branch ────────────────────────────
   const descUser = isService
     ? `Write a concise SEO service description for "${product.title}" offered by RudraKailash.com.\n\nMAIN KEYWORD: ${product.title}\n\nSERVICE CONTEXT:\n- Performed by: MVS Vedapadasala vadhyars, Coimbatore (Ghana Parayana trained)\n- Vadhyars Bhadrinath, Akshai Jayaraman, Harish secured 1st place in VRNT examination by Kanchi Mutt\n- Delivered online — customer books, vadhyars perform, video/photo documentation sent\n- Authentic traditional setting — real padashaala, not studio\n\nSTRUCTURE:\n<h2>${product.title} — Online Vedic Service by MVS Vedapadasala</h2>\n<p>[2–3 sentences: what this service is, who performs it, spiritual purpose]</p>\n<h3>Vedic Significance of ${product.title}</h3>\n[MAX 4 lines: scriptural basis, deity invoked, spiritual purpose]\n<h3>What You Receive — Complete Service Inclusions</h3>\n<ul>[4–5 bullets: performance by trained vadhyars, video/photo documentation, personalised sankalpa, date flexibility, prasad dispatch if applicable]</ul>\n<h3>Performed by MVS Vedapadasala — Authentic Coimbatore Vadhyars</h3>\n[2–3 lines: Ghana Parayana training, Kanchi Mutt VRNT 1st place, real padashaala environment]\n<h3>Who Should Book ${product.title}</h3>\n<ul>[4–5 bullets: ideal devotee profiles — "Those seeking…", "Families facing…"]</ul>\n<h3>How to Book Your ${product.title}</h3>\n<ul>[4 bullets: step-by-step — select date, provide sankalpa details, vadhyars perform, receive documentation]</ul>\n<h3>Frequently Asked Questions About ${product.title}</h3>\n<dl>[4 FAQs: how the online service works, vadhyar credentials, what is delivered, booking customisation]</dl>\n\n${kwPlacementInstructions}\n\nCONTENT GAPS TO COVER: ${gapSummary}\nCURRENT DESCRIPTION (for reference): ${descPlain}\n\nOUTPUT: Clean HTML only, starting with <h2>. Service content only — no bead/certification language.`
+    : isKarungali
+    ? `Write a concise SEO product description for "${product.title}" on RudraKailash.com.\n\nMAIN KEYWORD: ${product.title}\n\nPRODUCT CONTEXT:\n- Material: Karungali (Ebony) wood — botanical name Diospyros ebenum\n- Origin: Tamil Nadu, South India — deeply rooted in Shaiva Siddhanta tradition\n- Authentication: Visual grain pattern inspection, wood density verification, species identification — NOT X-ray\n- Associated deity: Lord Shani (Saturn) — primary; also used for protection and grounding\n- Traditional use: Japa mala, daily wear, protection against negative energies\n\nSTRUCTURE:\n<h2>${product.title} — Authentic Karungali Ebony Wood from Tamil Nadu</h2>\n<p>[2–3 sentences: keyword in first sentence, material, traditional significance, seeker hook]</p>\n<h3>Significance of Karungali (Ebony) Wood in Shaiva Tradition</h3>\n[MAX 4 lines: Diospyros ebenum botanical name, Shaiva Siddhanta, Shani connection, Tamil Nadu heritage]\n<h3>What Seekers Experience with ${product.title}</h3>\n<ul>[4–5 bullets: "Seekers report…" — grounding, focus, protection, Shani remediation — NO direct claims]</ul>\n<h3>How Karungali Wood is Authenticated at RudraKailash</h3>\n[2–3 lines: species identification by grain pattern and wood density, Diospyros ebenum confirmed, sourced from certified artisans — NO X-ray language, NO RKRTL]\n<h3>Who Should Wear ${product.title}</h3>\n<ul>[4–5 bullets: seeker profiles — Shani Mahadasha, Saturn transit, those seeking grounding, daily japa practitioners]</ul>\n<h3>How to Use Your ${product.title} — Wearing and Care</h3>\n<ul>[4–5 bullets: day to begin wearing (Saturday), mantra (Om Sham Shanicharaya Namah), care — no oil, store dry, avoid water immersion]</ul>\n<h3>Frequently Asked Questions About ${product.title}</h3>\n<dl>[4 FAQs in <dt><strong>1. Question</strong></dt><dd>Answer</dd> format — cover: what is karungali, Shani benefits, care, authenticity]</dl>\n\n${kwPlacementInstructions}\n\nCONTENT GAPS TO COVER: ${gapSummary}\nCURRENT DESCRIPTION (for reference only): ${descPlain}\n\nOUTPUT: Clean HTML only, starting with <h2>. CRITICAL: No RKRTL, no X-ray, no Elaeocarpus ganitrus — this is WOOD not a Rudraksha bead.`
     : `Write a concise SEO product description for "${product.title}" on RudraKailash.com.\n\nMAIN KEYWORD: ${product.title}\n${isHalfMoon ? `SPECIAL NOTE — 1 Mukhi Half Moon: This is a South Indian Rudraksha (not Nepali). The round 1 Mukhi Nepali bead is virtually non-existent today. The Half Moon form from South India is the authentic, scripturally valid form of 1 Mukhi available. Present this positively — it IS the genuine option.\n` : ""}\nSTRUCTURE:\n<h2>${product.title} — Authentic RKRTL-Certified Rudraksha Bead</h2>\n<p>[2–3 sentences: keyword in first sentence, origin, seeker hook]</p>\n<h3>Spiritual Significance of ${product.title} in Vedic Tradition</h3>\n[MAX 4 lines or <ul>: ruling deity, scripture, mantra, planet]\n<h3>What Seekers Describe About ${product.title}</h3>\n<ul>[4–5 bullets: "Seekers report…" — NO direct claims]</ul>\n<h3>RKRTL Certification — Verified Authentic ${product.title}</h3>\n[2–3 lines: X-ray imaging + microscopy, Elaeocarpus ganitrus confirmed, certificate issued — do NOT include any verify/certificate links]\n<h3>Who Should Buy ${product.title} — Ideal Seekers</h3>\n<ul>[4–5 bullets: seeker profiles]</ul>\n<h3>How to Wear Your ${product.title} — Day, Mantra and Method</h3>\n<ul>[4–5 bullets: day to begin, thread/metal, mantra, energisation steps]</ul>\n<h3>Frequently Asked Questions About ${product.title}</h3>\n<dl>[4 FAQs in <dt><strong>1. Question</strong></dt><dd>Answer</dd> format]</dl>\n\n${kwPlacementInstructions}\n\nCONTENT GAPS TO COVER: ${gapSummary}\nCURRENT DESCRIPTION (for reference only): ${descPlain}\n\nOUTPUT: Clean HTML only, starting with <h2>.`;
 
-  // ── Meta prompts — also branch on service vs product ───────────────────────
+  // ── Meta & Tags prompts — three-way branch ────────────────────────────────
   const metaTitleUser = isService
     ? `Write a meta title for "${product.title}" service on RudraKailash.com. Max 60 chars. Include service keyword + "RudraKailash". Do NOT mention RKRTL or certification.`
+    : isKarungali
+    ? `Write a meta title for "${product.title}" on RudraKailash.com. Max 60 chars. Include "Karungali" or "Ebony" + "RudraKailash". Do NOT mention RKRTL or X-ray.`
     : `Write a meta title for "${product.title}" on RudraKailash.com. Max 60 chars. Include main keyword + brand name "RudraKailash".`;
 
   const metaDescUser = isService
     ? `Write a meta description for "${product.title}" service on RudraKailash.com. 145–155 characters. Mention MVS Vedapadasala vadhyars, authentic Vedic tradition, and include a booking CTA. Do NOT mention RKRTL.`
+    : isKarungali
+    ? `Write a meta description for "${product.title}" on RudraKailash.com. 145–155 characters. Mention authentic Karungali ebony wood, Tamil Nadu origin, Shani remedy, and include a buy CTA. Do NOT mention RKRTL or X-ray certification.`
     : `Write a meta description for "${product.title}" on RudraKailash.com. 145–155 characters. Mention RKRTL certified and include a call to action.`;
 
   const tagsUser = isService
     ? `Generate 10–12 Shopify product tags for the "${product.title}" service on RudraKailash.com. Current tags: "${product.tags||"none"}". Include: online puja, vedic service, MVS Vedapadasala, homa/puja type, coimbatore vadhyar, authentic vedic ritual, book online.`
+    : isKarungali
+    ? `Generate 10–12 Shopify product tags for "${product.title}" on RudraKailash.com. Current tags: "${product.tags||"none"}". Include: karungali, ebony mala, karungali mala, diospyros ebenum, shani remedy, saturn remedy, karungali bracelet, authentic ebony, tamil nadu, shaiva tradition, wood mala, protection mala.`
     : `Generate 10–12 Shopify product tags for "${product.title}". Current tags: "${product.tags||"none"}". Include mukhi number variants, rudraksha, RKRTL, certified, authentic, and relevant spiritual keywords.`;
 
   const [description, metaTitle, metaDesc, tags] = await Promise.allSettled([
@@ -659,21 +578,17 @@ async function runSEOPipeline(product) {
     console.log(`📊 Auto-registered for rank tracking: ${product.title}`);
   }
 
-  const scoreBefore = scoreSEO(product.metafields_global_title_tag, product.metafields_global_description_tag, product.tags, product.body_html, isService);
-  const scoreAfter  = scoreSEO(result.metaTitle, result.metaDesc, result.tags, result.description, isService);
+  const scoreBefore = scoreSEO(product.metafields_global_title_tag, product.metafields_global_description_tag, product.tags, product.body_html, isService, isKarungali);
+  const scoreAfter  = scoreSEO(result.metaTitle, result.metaDesc, result.tags, result.description, isService, isKarungali);
   console.log(`✅ ${product.title}: ${scoreBefore} → ${scoreAfter}`);
   return { ...result, scoreBefore, scoreAfter };
 }
 
-// ─── Approval endpoint ────────────────────────────────────────────────────────
 app.get("/approve/:token", async (req, res) => {
   const approval = pendingApprovals.get(req.params.token);
   if (!approval) return res.send(`<html><body style="font-family:sans-serif;background:#0D0500;color:#F5E6C8;display:flex;align-items:center;justify-content:center;height:100vh"><div style="text-align:center;padding:40px;border:1px solid #7B1C1C;border-radius:12px;background:#1A0A00;"><div style="font-size:48px">❌</div><h2 style="color:#F08080;margin:16px 0">Link Expired</h2><p style="color:#9A7050">This approval link has expired or was already used.</p></div></body></html>`);
   try {
-    const shopifyRes = await fetch(
-      `https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${approval.productId}.json`,
-      { method:"PUT", headers:{"X-Shopify-Access-Token":storedAccessToken,"Content-Type":"application/json"}, body:JSON.stringify({product:{id:approval.productId,...approval.payload}}) }
-    );
+    const shopifyRes = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${approval.productId}.json`, { method:"PUT", headers:{"X-Shopify-Access-Token":storedAccessToken,"Content-Type":"application/json"}, body:JSON.stringify({product:{id:approval.productId,...approval.payload}}) });
     const data = await shopifyRes.json();
     pendingApprovals.delete(req.params.token);
     if (shopifyRes.ok) {
@@ -684,84 +599,32 @@ app.get("/approve/:token", async (req, res) => {
   }
 });
 
-// ─── Email builder ────────────────────────────────────────────────────────────
 function buildApprovalEmail(results, triggerType) {
   const totalProducts = results.length;
   const avgBefore = Math.round(results.reduce((s,r) => s+r.scoreBefore, 0) / totalProducts);
   const avgAfter  = Math.round(results.reduce((s,r) => s+r.scoreAfter,  0) / totalProducts);
   const triggered = triggerType==="webhook" ? "New Product Added" : triggerType==="manual" ? "Manual Trigger" : "Weekly Scheduled Run";
-
   const productRows = results.map(r => {
     const approvalToken = generateApprovalToken();
     pendingApprovals.set(approvalToken, { productId:r.productId, productTitle:r.productTitle, payload:r.payload, scoreBefore:r.scoreBefore, scoreAfter:r.scoreAfter, createdAt:new Date() });
-    return `<tr style="border-bottom:1px solid #2E1500">
-      <td style="padding:12px 16px;color:#F5E6C8;font-size:13px">${r.productTitle}</td>
-      <td style="padding:12px 16px;text-align:center;color:#F08080;font-weight:bold">${r.scoreBefore}</td>
-      <td style="padding:12px 16px;text-align:center;color:#7FD48A;font-weight:bold">${r.scoreAfter}</td>
-      <td style="padding:12px 16px;text-align:center;color:#F0C84A;font-weight:bold">+${r.scoreAfter-r.scoreBefore}</td>
-      <td style="padding:12px 16px;text-align:center"><a href="${APP_URL}/approve/${approvalToken}" style="background:#D4A017;color:#0D0500;padding:6px 16px;border-radius:5px;text-decoration:none;font-size:12px;font-weight:bold">✓ Approve &amp; Push</a></td>
-    </tr>`;
+    return `<tr style="border-bottom:1px solid #2E1500"><td style="padding:12px 16px;color:#F5E6C8;font-size:13px">${r.productTitle}</td><td style="padding:12px 16px;text-align:center;color:#F08080;font-weight:bold">${r.scoreBefore}</td><td style="padding:12px 16px;text-align:center;color:#7FD48A;font-weight:bold">${r.scoreAfter}</td><td style="padding:12px 16px;text-align:center;color:#F0C84A;font-weight:bold">+${r.scoreAfter-r.scoreBefore}</td><td style="padding:12px 16px;text-align:center"><a href="${APP_URL}/approve/${approvalToken}" style="background:#D4A017;color:#0D0500;padding:6px 16px;border-radius:5px;text-decoration:none;font-size:12px;font-weight:bold">✓ Approve &amp; Push</a></td></tr>`;
   }).join("");
-
   const bulkToken = generateApprovalToken();
-  pendingApprovals.set("bulk_" + bulkToken, {
-    isBulk: true,
-    productTokens: results.map(r => [...pendingApprovals.entries()].find(([k, v]) => !v.isBulk && v.productId === r.productId && v.productTitle === r.productTitle)?.[0]).filter(Boolean),
-    createdAt: new Date(),
-  });
-
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8"/></head>
-<body style="margin:0;padding:0;background:#0D0500;font-family:Georgia,serif">
-<div style="max-width:680px;margin:0 auto;padding:32px 20px">
-  <div style="text-align:center;margin-bottom:32px"><div style="font-size:36px">ॐ</div>
-    <h1 style="color:#F0C84A;font-size:22px;margin:0">RudraKailash SEO Agent</h1>
-    <p style="color:#9A7050;font-size:13px;margin:4px 0">Automated Optimisation Report · ${triggered}</p>
-    <p style="color:#5A3020;font-size:12px">${new Date().toLocaleString("en-IN",{timeZone:"Asia/Kolkata"})} IST</p>
-  </div>
-  <div style="background:#1A0A00;border:1px solid #2E1500;border-radius:10px;padding:20px;margin-bottom:24px">
-    <table width="100%"><tr>
-      <td style="text-align:center"><div style="color:#9A7050;font-size:11px;letter-spacing:1px">PRODUCTS</div><div style="color:#F0C84A;font-size:28px;font-weight:bold">${totalProducts}</div></td>
-      <td style="text-align:center"><div style="color:#9A7050;font-size:11px;letter-spacing:1px">AVG BEFORE</div><div style="color:#F08080;font-size:28px;font-weight:bold">${avgBefore}</div></td>
-      <td style="text-align:center"><div style="color:#9A7050;font-size:11px;letter-spacing:1px">AVG AFTER</div><div style="color:#7FD48A;font-size:28px;font-weight:bold">${avgAfter}</div></td>
-      <td style="text-align:center"><div style="color:#9A7050;font-size:11px;letter-spacing:1px">IMPROVEMENT</div><div style="color:#F0C84A;font-size:28px;font-weight:bold">+${avgAfter-avgBefore}</div></td>
-    </tr></table>
-  </div>
-  <div style="text-align:center;margin-bottom:20px">
-    <a href="${APP_URL}/approve-all/${bulkToken}" style="display:inline-block;background:#D4A017;color:#0D0500;padding:14px 36px;border-radius:8px;text-decoration:none;font-size:15px;font-weight:bold;letter-spacing:0.5px">🔱 Bulk Approve All ${totalProducts} Products</a>
-    <p style="color:#5A3020;font-size:11px;margin-top:8px">Pushes all AI suggestions live in one click · Cannot be undone</p>
-  </div>
-  <table style="width:100%;border-collapse:collapse;background:#120600;border:1px solid #2E1500;border-radius:10px;overflow:hidden">
-    <thead><tr style="background:#160800">
-      <th style="padding:10px 16px;text-align:left;color:#9A7050;font-size:11px;font-weight:normal">PRODUCT</th>
-      <th style="padding:10px 16px;text-align:center;color:#9A7050;font-size:11px;font-weight:normal">BEFORE</th>
-      <th style="padding:10px 16px;text-align:center;color:#9A7050;font-size:11px;font-weight:normal">AFTER</th>
-      <th style="padding:10px 16px;text-align:center;color:#9A7050;font-size:11px;font-weight:normal">GAIN</th>
-      <th style="padding:10px 16px;text-align:center;color:#9A7050;font-size:11px;font-weight:normal">ACTION</th>
-    </tr></thead>
-    <tbody>${productRows}</tbody>
-  </table>
-  <div style="text-align:center;margin-top:32px;padding-top:20px;border-top:1px solid #2E1500">
-    <p style="color:#5A3020;font-size:11px">RudraKailash Agentic SEO · Approval links expire in 7 days</p>
-  </div>
-</div></body></html>`;
+  pendingApprovals.set("bulk_" + bulkToken, { isBulk: true, productTokens: results.map(r => [...pendingApprovals.entries()].find(([k, v]) => !v.isBulk && v.productId === r.productId && v.productTitle === r.productTitle)?.[0]).filter(Boolean), createdAt: new Date() });
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"/></head><body style="margin:0;padding:0;background:#0D0500;font-family:Georgia,serif"><div style="max-width:680px;margin:0 auto;padding:32px 20px"><div style="text-align:center;margin-bottom:32px"><div style="font-size:36px">ॐ</div><h1 style="color:#F0C84A;font-size:22px;margin:0">RudraKailash SEO Agent</h1><p style="color:#9A7050;font-size:13px;margin:4px 0">Automated Optimisation Report · ${triggered}</p><p style="color:#5A3020;font-size:12px">${new Date().toLocaleString("en-IN",{timeZone:"Asia/Kolkata"})} IST</p></div><div style="background:#1A0A00;border:1px solid #2E1500;border-radius:10px;padding:20px;margin-bottom:24px"><table width="100%"><tr><td style="text-align:center"><div style="color:#9A7050;font-size:11px;letter-spacing:1px">PRODUCTS</div><div style="color:#F0C84A;font-size:28px;font-weight:bold">${totalProducts}</div></td><td style="text-align:center"><div style="color:#9A7050;font-size:11px;letter-spacing:1px">AVG BEFORE</div><div style="color:#F08080;font-size:28px;font-weight:bold">${avgBefore}</div></td><td style="text-align:center"><div style="color:#9A7050;font-size:11px;letter-spacing:1px">AVG AFTER</div><div style="color:#7FD48A;font-size:28px;font-weight:bold">${avgAfter}</div></td><td style="text-align:center"><div style="color:#9A7050;font-size:11px;letter-spacing:1px">IMPROVEMENT</div><div style="color:#F0C84A;font-size:28px;font-weight:bold">+${avgAfter-avgBefore}</div></td></tr></table></div><div style="text-align:center;margin-bottom:20px"><a href="${APP_URL}/approve-all/${bulkToken}" style="display:inline-block;background:#D4A017;color:#0D0500;padding:14px 36px;border-radius:8px;text-decoration:none;font-size:15px;font-weight:bold;letter-spacing:0.5px">🔱 Bulk Approve All ${totalProducts} Products</a><p style="color:#5A3020;font-size:11px;margin-top:8px">Pushes all AI suggestions live in one click · Cannot be undone</p></div><table style="width:100%;border-collapse:collapse;background:#120600;border:1px solid #2E1500;border-radius:10px;overflow:hidden"><thead><tr style="background:#160800"><th style="padding:10px 16px;text-align:left;color:#9A7050;font-size:11px;font-weight:normal">PRODUCT</th><th style="padding:10px 16px;text-align:center;color:#9A7050;font-size:11px;font-weight:normal">BEFORE</th><th style="padding:10px 16px;text-align:center;color:#9A7050;font-size:11px;font-weight:normal">AFTER</th><th style="padding:10px 16px;text-align:center;color:#9A7050;font-size:11px;font-weight:normal">GAIN</th><th style="padding:10px 16px;text-align:center;color:#9A7050;font-size:11px;font-weight:normal">ACTION</th></tr></thead><tbody>${productRows}</tbody></table><div style="text-align:center;margin-top:32px;padding-top:20px;border-top:1px solid #2E1500"><p style="color:#5A3020;font-size:11px">RudraKailash Agentic SEO · Approval links expire in 7 days</p></div></div></body></html>`;
 }
 
-// ─── Bulk Approve All ─────────────────────────────────────────────────────────
 app.get("/approve-all/:token", async (req, res) => {
   const bulkKey = "bulk_" + req.params.token;
   const bulk    = pendingApprovals.get(bulkKey);
   if (!bulk || !bulk.isBulk) return res.send(`<html><body style="font-family:sans-serif;background:#0D0500;color:#F5E6C8;display:flex;align-items:center;justify-content:center;height:100vh"><div style="text-align:center;padding:40px;border:1px solid #7B1C1C;border-radius:12px;background:#1A0A00;"><div style="font-size:48px">❌</div><h2 style="color:#F08080;margin:16px 0">Link Expired</h2></div></body></html>`);
-
   let pushed = 0, failed = 0;
   const details = [];
   for (const token of bulk.productTokens) {
     const approval = pendingApprovals.get(token);
     if (!approval) { failed++; continue; }
     try {
-      const shopifyRes = await fetch(
-        `https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${approval.productId}.json`,
-        { method:"PUT", headers:{"X-Shopify-Access-Token":storedAccessToken,"Content-Type":"application/json"}, body:JSON.stringify({ product:{ id:approval.productId, ...approval.payload } }) }
-      );
+      const shopifyRes = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${approval.productId}.json`, { method:"PUT", headers:{"X-Shopify-Access-Token":storedAccessToken,"Content-Type":"application/json"}, body:JSON.stringify({ product:{ id:approval.productId, ...approval.payload } }) });
       if (shopifyRes.ok) { pushed++; details.push(`<li style="color:#7FD48A;padding:4px 0">✅ ${approval.productTitle} — SEO: ${approval.scoreBefore} → ${approval.scoreAfter}</li>`); pendingApprovals.delete(token); }
       else { failed++; details.push(`<li style="color:#F08080;padding:4px 0">❌ ${approval.productTitle} — Push failed</li>`); }
     } catch(e) { failed++; details.push(`<li style="color:#F08080;padding:4px 0">❌ ${approval.productTitle} — ${e.message}</li>`); }
@@ -771,7 +634,6 @@ app.get("/approve-all/:token", async (req, res) => {
   res.send(`<html><body style="font-family:sans-serif;background:#0D0500;color:#F5E6C8;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px;box-sizing:border-box"><div style="text-align:center;padding:40px;border:1px solid #D4A017;border-radius:12px;background:#1A0A00;max-width:560px;width:100%"><div style="font-size:48px">🔱</div><h2 style="color:#F0C84A;margin:16px 0">Bulk Push Complete</h2><p style="color:#9A7050;margin-bottom:20px">${pushed} pushed · ${failed} failed</p><ul style="list-style:none;padding:0;margin:0 0 20px;text-align:left;font-size:13px;max-height:400px;overflow-y:auto">${details.join("")}</ul></div></body></html>`);
 });
 
-// ─── Weekly SEO cron: Sunday 11pm IST = 17:30 UTC ────────────────────────────
 cron.schedule("30 17 * * 0", async () => {
   console.log("⏰ Weekly SEO cron — Sunday 11pm IST");
   if (!storedAccessToken) return;
@@ -791,7 +653,6 @@ cron.schedule("30 17 * * 0", async () => {
   } catch(e) { console.error("Weekly cron error:", e.message); }
 }, { timezone: "UTC" });
 
-// ─── Shopify webhook ──────────────────────────────────────────────────────────
 app.post("/webhooks/products/create", async (req, res) => {
   res.status(200).json({ received: true });
   const product = req.body;
@@ -808,7 +669,6 @@ app.post("/webhooks/products/create", async (req, res) => {
   } catch(e) { console.error("Webhook error:", e.message); }
 });
 
-// ─── Register webhooks ────────────────────────────────────────────────────────
 async function registerWebhooks() {
   if (!storedAccessToken) return;
   try {
@@ -816,14 +676,12 @@ async function registerWebhooks() {
     const listRes    = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/webhooks.json`, { headers:{"X-Shopify-Access-Token":storedAccessToken} });
     const listData   = await listRes.json();
     if ((listData.webhooks||[]).find(w => w.address===webhookUrl)) { console.log("✅ Webhook already registered"); return; }
-    const createRes  = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/webhooks.json`,
-      { method:"POST", headers:{"X-Shopify-Access-Token":storedAccessToken,"Content-Type":"application/json"}, body:JSON.stringify({ webhook:{ topic:"products/create", address:webhookUrl, format:"json" } }) });
+    const createRes  = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/webhooks.json`, { method:"POST", headers:{"X-Shopify-Access-Token":storedAccessToken,"Content-Type":"application/json"}, body:JSON.stringify({ webhook:{ topic:"products/create", address:webhookUrl, format:"json" } }) });
     const createData = await createRes.json();
     console.log(createData.webhook ? `✅ Webhook registered` : `⚠️  Webhook issue: ${JSON.stringify(createData)}`);
   } catch(e) { console.error("Webhook registration failed:", e.message); }
 }
 
-// ─── Manual trigger ───────────────────────────────────────────────────────────
 app.post("/cron/trigger", async (req, res) => {
   if (req.query.secret !== SHOPIFY_CLIENT_SECRET) return res.status(403).json({ error: "Forbidden" });
   res.json({ message: "Manual cron triggered — email arriving shortly." });
@@ -845,7 +703,6 @@ app.post("/cron/trigger", async (req, res) => {
   }, 100);
 });
 
-// ─── Start ────────────────────────────────────────────────────────────────────
 app.listen(PORT, async () => {
   console.log(`🚀 RudraKailash SEO Proxy v8 running on port ${PORT}`);
   console.log(`   Store:         ${SHOPIFY_STORE_DOMAIN}`);
@@ -859,5 +716,3 @@ app.listen(PORT, async () => {
   console.log(`   Audit Module:  ${auditModule ? "✅ Loaded" : "⚠️  Not loaded"}`);
   if (storedAccessToken) await registerWebhooks();
 });
-// NOTE: The following functions should be inserted into server.js
-// BEFORE the runSEOPipeline function
