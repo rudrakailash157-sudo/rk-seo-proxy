@@ -242,6 +242,7 @@
         </select>
         <span id="thinBadge" class="thin-badge" style="display:none"></span>
         <span id="serviceBadge" class="service-badge hidden">🛕 Service</span>
+        <span id="karungaliBadge" class="service-badge hidden" style="background:#0A1A0A;color:#7FD48A;border-color:#2A5A2A;">🪵 Karungali Wood</span>
         <button class="btn btn-primary" onclick="runAllAgents()" id="runBtn" disabled>▶ Run AI SEO Agents</button>
       </div>
       <div id="thinWarning" class="alert alert-warn mt-8 hidden">⚠ Thin content detected — this product has a very short or missing description.</div>
@@ -548,6 +549,20 @@ function isServiceProduct(product) {
   return containsService || endsWithService;
 }
 
+// ─── Karungali product detection ─────────────────────────────────────────────
+function isKarungaliProduct(product) {
+  if (!product) return false;
+  const title = (product.title || "").toLowerCase();
+  const tags  = (product.tags  || "").toLowerCase();
+  const body  = (product.body_html || "").toLowerCase().slice(0, 300);
+  const karungaliKeywords = [
+    "karungali","karungal","ebony","ebony wood","ebony mala",
+    "ebony bracelet","karungali mala","karungali bracelet",
+    "diospyros ebenum","karungali kattai",
+  ];
+  return karungaliKeywords.some(kw => title.includes(kw) || tags.includes(kw) || body.includes(kw));
+}
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("proxyUrl").value = PROXY_URL;
@@ -619,10 +634,16 @@ function onProductChange() {
   const svcBadge = document.getElementById("serviceBadge");
   if (!selectedProduct) { badge.style.display = "none"; warning.classList.add("hidden"); svcBadge.classList.add("hidden"); return; }
 
+  const kBadge = document.getElementById("karungaliBadge");
   if (isServiceProduct(selectedProduct)) {
     svcBadge.classList.remove("hidden");
+    if (kBadge) kBadge.classList.add("hidden");
+  } else if (isKarungaliProduct(selectedProduct)) {
+    svcBadge.classList.add("hidden");
+    if (kBadge) kBadge.classList.remove("hidden");
   } else {
     svcBadge.classList.add("hidden");
+    if (kBadge) kBadge.classList.add("hidden");
   }
 
   const wordCount = (selectedProduct.body_html || "").replace(/<[^>]+>/g, "").split(/\s+/).filter(Boolean).length;
@@ -656,14 +677,17 @@ async function runAllAgents() {
   document.getElementById("sgeScoreWrap").classList.add("hidden");
   generatedFAQs = [];
 
-  const isService = isServiceProduct(selectedProduct);
-  console.log(`Product type: ${isService ? "🛕 SERVICE" : "📿 BEAD/PRODUCT"}`);
+  const isService   = isServiceProduct(selectedProduct);
+  const isKarungali = !isService && isKarungaliProduct(selectedProduct);
+  console.log(`Product type: ${isService ? "🛕 SERVICE" : isKarungali ? "🪵 KARUNGALI" : "📿 BEAD/PRODUCT"}`);
 
   document.getElementById("eeAtBadge").textContent = isService
     ? "✦ MVS Vedapadasala · Ghana Parayana · Kanchi Mutt VRNT · Feb 2026 Google E-E-A-T compliant"
+    : isKarungali
+    ? "✦ Karungali (Diospyros ebenum) · Authentic Ebony Wood · Tamil Nadu Heritage · Shaiva Siddhanta Tradition"
     : "✦ Intent-based E-E-A-T expression · GMC-safe · No deity names in titles/headings · Feb 2026 Google update compliant";
 
-  const before = scoreSEO(selectedProduct.metafields_global_title_tag, selectedProduct.metafields_global_description_tag, selectedProduct.tags, selectedProduct.body_html, isService);
+  const before = scoreSEO(selectedProduct.metafields_global_title_tag, selectedProduct.metafields_global_description_tag, selectedProduct.tags, selectedProduct.body_html, isService, isKarungali);
   showScore("scoreBefore", before);
 
   try {
@@ -740,6 +764,8 @@ async function runAllAgents() {
 
     const descSystem = isService
       ? `You are a Vedic services SEO expert for RudraKailash.com. Write service page descriptions. Rules: keyword in first <h2> and opening <p>; cite MVS Vedapadasala vadhyar credentials and Kanchi Mutt VRNT achievement; NEVER mention Rudraksha beads, RKRTL certification, or X-ray testing — this is a SERVICE not a physical product. Output clean HTML only. No markdown.`
+      : isKarungali
+      ? `You are a sacred wood jewellery SEO expert for RudraKailash.com. Write Karungali Ebony wood product descriptions. Rules: keyword in first <h2> and opening <p> within 100 words; cite Diospyros ebenum botanical name, Shaiva Siddhanta tradition, Tamil Nadu heritage; STRICT — NO X-ray testing, NO RKRTL certification language, NO Elaeocarpus ganitrus — Karungali is authenticated by wood grain, density and species identification NOT X-ray imaging. MAX 4 lines prose per section; use <ul> if more. MAX 550 words. Output clean HTML only. No markdown.`
       : `You are a Rudraksha SEO expert for RudraKailash.com. Rules:
 - Keyword in first <h2> and first <p> within 100 words
 - E-E-A-T framing ("seekers describe…" / "seekers report…") — ZERO direct health or spiritual benefit claims
@@ -758,20 +784,28 @@ GMC IDENTITY & BELIEF POLICY RULES (critical — violations cause ad restriction
 
     const descUser = isService
       ? `Write a concise SEO service page for "${selectedProduct.title}" by RudraKailash.com.\n\nSERVICE CONTEXT:\n- Performed by: MVS Vedapadasala vadhyars, Coimbatore\n- Ghana Parayana tradition\n- Vadhyars Bhadrinath, Akshai Jayaraman, Harish — 1st place in VRNT exam by Kanchi Mutt\n- Online service: customer books → vadhyars perform → video/photo documentation sent\n- Real padashaala, not studio\n\nSTRUCTURE:\n<h2>${selectedProduct.title} — Online Vedic Service by MVS Vedapadasala</h2>\n<p>[2–3 sentences: what this service is, who performs it, spiritual purpose]</p>\n<h3>Vedic Significance of ${selectedProduct.title}</h3>\n[MAX 4 lines: deity invoked, scriptural basis, spiritual purpose]\n<h3>What You Receive — Complete Inclusions</h3>\n<ul>[4–5 bullets: trained vadhyar performance, video/photo documentation, personalised sankalpa, date flexibility]</ul>\n<h3>Performed by MVS Vedapadasala — Authentic Coimbatore Vadhyars</h3>\n[2–3 lines: Ghana Parayana training, Kanchi Mutt VRNT 1st place achievement, real padashaala not studio]\n<h3>Who Should Book ${selectedProduct.title}</h3>\n<ul>[4–5 bullets: ideal devotee profiles]</ul>\n<h3>How to Book Your ${selectedProduct.title}</h3>\n<ul>[4 bullets: step-by-step booking process]</ul>\n<h3>Frequently Asked Questions</h3>\n<dl>[4 FAQs: how online service works, vadhyar credentials, what is delivered, booking/customisation]</dl>\n\n${kwPlacement}\n\nGAPS TO COVER: ${gapSummary}\nCURRENT DESCRIPTION: ${descPlain}\n\nOUTPUT: Clean HTML only, starting with <h2>. NO bead/RKRTL/X-ray language.`
-      : `Write a concise SEO product description for "${selectedProduct.title}" on RudraKailash.com.\n\nMAIN KEYWORD: ${selectedProduct.title}\n${isHalfMoon ? "SPECIAL NOTE: This is a South Indian Half Moon 1 Mukhi — NOT Nepali. Present this positively as the authentic, scripturally valid form available today.\n" : ""}\nSTRUCTURE (follow exactly — GMC rules apply to all headings and opening paragraph):\n<h2>${selectedProduct.title} — RKRTL-Certified | X-Ray Verified | Genuine Nepali Rudraksha</h2>\n<p>[2–3 sentences: keyword in first sentence, Nepal/Indonesian origin, bead size, RKRTL authentication — NO deity names here]</p>\n<h3>Vedic Tradition & Significance of ${selectedProduct.title}</h3>\n[MAX 4 lines or <ul>: scripture reference, mantra, planet association — NO deity name in the heading itself; deity name may appear once inside the bullet text only]\n<h3>What Seekers Describe About ${selectedProduct.title}</h3>\n<ul>[4–5 bullets: "Seekers report…" — NO direct claims, NO deity names]</ul>\n<h3>RKRTL Authentication — X-Ray Verified ${selectedProduct.title}</h3>\n[2–3 lines: X-ray imaging + microscopy, Elaeocarpus ganitrus confirmed, certificate with unique ID]\n<h3>Who Should Wear ${selectedProduct.title}</h3>\n<ul>[4–5 bullets: seeker profiles — describe by life situation, not by deity devotion]</ul>\n<h3>Wearing Guide — ${selectedProduct.title}</h3>\n<ul>[4–5 bullets: day to begin, thread/metal, mantra, energisation]</ul>\n<h3>Frequently Asked Questions</h3>\n<dl>[4 FAQs: authenticity/certification, origin, who can wear it, value/quality]</dl>\n\n${kwPlacement}\n\nGAPS TO COVER: ${gapSummary}\nCURRENT DESCRIPTION: ${descPlain}\n\nOUTPUT: Clean HTML only, starting with <h2>. Strictly follow GMC heading and opening paragraph rules above.`;
+      : isKarungali
+      ? `Write a concise SEO product description for "${selectedProduct.title}" on RudraKailash.com.\n\nMAIN KEYWORD: ${selectedProduct.title}\n\nPRODUCT CONTEXT:\n- Material: Karungali (Ebony) wood — botanical name Diospyros ebenum\n- Origin: Tamil Nadu, South India — Shaiva Siddhanta tradition\n- Authentication: visual grain pattern, wood density, species identification — NOT X-ray\n- Associated deity: Lord Shani (Saturn) — primary; also protection and grounding\n- Traditional use: Japa mala, daily wear, protection\n\nSTRUCTURE (follow exactly):\n<h2>${selectedProduct.title} — Authentic Karungali Ebony Wood from Tamil Nadu</h2>\n<p>[2–3 sentences: keyword in first sentence, material (Diospyros ebenum), significance — NO deity names here]</p>\n<h3>Significance of Karungali (Ebony) Wood in Shaiva Tradition</h3>\n[MAX 4 lines: Diospyros ebenum botanical name, Shaiva Siddhanta, Shani connection, Tamil Nadu heritage]\n<h3>What Seekers Experience with ${selectedProduct.title}</h3>\n<ul>[4–5 bullets: "Seekers report…" — grounding, focus, protection — NO direct claims]</ul>\n<h3>How Karungali Wood is Authenticated at RudraKailash</h3>\n[2–3 lines: species identification by grain pattern and wood density, Diospyros ebenum confirmed, certified artisan sourcing — NO X-ray, NO RKRTL]\n<h3>Who Should Wear ${selectedProduct.title}</h3>\n<ul>[4–5 bullets: seeker profiles — Shani Mahadasha, Saturn transit, grounding, daily japa]</ul>\n<h3>How to Use Your ${selectedProduct.title} — Wearing and Care</h3>\n<ul>[4–5 bullets: begin on Saturday, Om Sham Shanicharaya Namah, no oil, store dry, avoid water]</ul>\n<h3>Frequently Asked Questions</h3>\n<dl>[4 FAQs: what is karungali wood, Shani connection, care instructions, how authenticity is verified]</dl>\n\n${kwPlacement}\n\nGAPS TO COVER: ${gapSummary}\nCURRENT DESCRIPTION: ${descPlain}\n\nOUTPUT: Clean HTML only, starting with <h2>. CRITICAL: No RKRTL, no X-ray, no Elaeocarpus ganitrus — this is WOOD not Rudraksha.\`
+      : \`Write a concise SEO product description for "${selectedProduct.title}" on RudraKailash.com.\n\nMAIN KEYWORD: ${selectedProduct.title}\n${isHalfMoon ? "SPECIAL NOTE: This is a South Indian Half Moon 1 Mukhi — NOT Nepali. Present this positively as the authentic, scripturally valid form available today.\n" : ""}\nSTRUCTURE (follow exactly — GMC rules apply to all headings and opening paragraph):\n<h2>${selectedProduct.title} — RKRTL-Certified | X-Ray Verified | Genuine Nepali Rudraksha</h2>\n<p>[2–3 sentences: keyword in first sentence, Nepal/Indonesian origin, bead size, RKRTL authentication — NO deity names here]</p>\n<h3>Vedic Tradition & Significance of ${selectedProduct.title}</h3>\n[MAX 4 lines or <ul>: scripture reference, mantra, planet association — NO deity name in the heading itself; deity name may appear once inside the bullet text only]\n<h3>What Seekers Describe About ${selectedProduct.title}</h3>\n<ul>[4–5 bullets: "Seekers report…" — NO direct claims, NO deity names]</ul>\n<h3>RKRTL Authentication — X-Ray Verified ${selectedProduct.title}</h3>\n[2–3 lines: X-ray imaging + microscopy, Elaeocarpus ganitrus confirmed, certificate with unique ID]\n<h3>Who Should Wear ${selectedProduct.title}</h3>\n<ul>[4–5 bullets: seeker profiles — describe by life situation, not by deity devotion]</ul>\n<h3>Wearing Guide — ${selectedProduct.title}</h3>\n<ul>[4–5 bullets: day to begin, thread/metal, mantra, energisation]</ul>\n<h3>Frequently Asked Questions</h3>\n<dl>[4 FAQs: authenticity/certification, origin, who can wear it, value/quality]</dl>\n\n${kwPlacement}\n\nGAPS TO COVER: ${gapSummary}\nCURRENT DESCRIPTION: ${descPlain}\n\nOUTPUT: Clean HTML only, starting with <h2>. Strictly follow GMC heading and opening paragraph rules above.`;
 
     // ── PATCHED: GMC-safe meta title prompt ──────────────────────────────────
     const titleUser = isService
       ? `Meta title for the "${selectedProduct.title}" service on RudraKailash.com. Max 60 chars. Include service name + MVS Vedapadasala or Authentic Vedic + RudraKailash brand.`
+      : isKarungali
+      ? `Meta title for "${selectedProduct.title}" on RudraKailash.com. Max 60 chars. Include "Karungali" or "Ebony Wood" + "Authentic" + "RudraKailash". Do NOT mention RKRTL or X-ray.`
       : `Meta title for "${selectedProduct.title}" on RudraKailash.com. Max 60 chars. Include: main keyword (mukhi + Rudraksha) + RKRTL Certified or X-Ray Verified + RudraKailash. STRICT RULE: NO deity names (no Shiva, Vishnu, Ganesha, Hanuman, etc.) — keep it product-focused for Google Shopping compatibility. Format example: "5 Mukhi Rudraksha | RKRTL Certified | RudraKailash"`;
 
     // ── PATCHED: GMC-safe meta description prompt ─────────────────────────────
     const metaDescUser = isService
       ? `Meta description for "${selectedProduct.title}" service on RudraKailash.com. 145–155 characters. Mention MVS Vedapadasala vadhyars, authentic Vedic tradition, booking CTA. Do NOT mention RKRTL.`
+      : isKarungali
+      ? `Meta description for "${selectedProduct.title}" on RudraKailash.com. Exactly 145–155 characters. Mention authentic Karungali ebony wood (Diospyros ebenum), Tamil Nadu origin, Shani remedy, and include a buy CTA. Do NOT mention RKRTL or X-ray.`
       : `Meta description for "${selectedProduct.title}" on RudraKailash.com. Exactly 145–155 characters. Structure: [bead size in mm + Nepali/Indonesian origin] + [RKRTL X-ray certified] + [unique benefit in neutral language] + [CTA: Shop/Buy/Order]. STRICT RULES: NO deity names. NO spiritual benefit claims like "attracts wealth" or "removes negativity". Position as a certified natural bead. Example structure: "Genuine 6mm Nepali 5 Mukhi Rudraksha, RKRTL X-ray certified for authenticity. Worn for clarity and calm. Buy authentic — RudraKailash."`;
 
     const tagsUser = isService
       ? `10–12 Shopify tags for the "${selectedProduct.title}" service on RudraKailash.com. Current: "${selectedProduct.tags||"none"}". Include: online puja, vedic service, MVS Vedapadasala, homa/puja type, coimbatore vadhyar, authentic vedic ritual, book online. No RKRTL tags.`
+      : isKarungali
+      ? `10–12 Shopify tags for "${selectedProduct.title}" on RudraKailash.com. Current: "${selectedProduct.tags||"none"}". Include: karungali, ebony mala, karungali mala, diospyros ebenum, shani remedy, saturn remedy, karungali bracelet, authentic ebony, tamil nadu, shaiva tradition, wood mala, protection mala. No RKRTL tags.`
       : `10–12 Shopify tags for "${selectedProduct.title}". Current: "${selectedProduct.tags||"none"}". Include mukhi variants, rudraksha, RKRTL, certified, authentic, x-ray verified, nepali rudraksha or indonesian rudraksha as appropriate, bead bracelet, meditation beads. Avoid deity-specific tags that could trigger GMC identity and belief policy.`;
 
     const faqUser = isService
@@ -813,7 +847,7 @@ GMC IDENTITY & BELIEF POLICY RULES (critical — violations cause ad restriction
     renderCurrentTags(selectedProduct.tags);
     renderNewTags();
 
-    const after = scoreSEO(newTitle, newMetaDesc, newTags, newDesc, isService);
+    const after = scoreSEO(newTitle, newMetaDesc, newTags, newDesc, isService, isKarungali);
     showScore("scoreAfter", after);
     document.getElementById("scoreImprovement").textContent = `+${after - before} PTS`;
     document.getElementById("scoreReadiness").textContent   = after >= 80 ? "Excellent — ready to push" : after >= 60 ? "Good — review before push" : "Needs improvement";
@@ -960,18 +994,28 @@ function renderNewTags() {
 }
 function updateCharCount(inputId, countId) { document.getElementById(countId).textContent = document.getElementById(inputId).value.length; }
 
-// ─── SEO Score (service-aware) ────────────────────────────────────────────────
-function scoreSEO(metaTitle, metaDesc, tags, desc, isService = false) {
+// ─── SEO Score (service + Karungali aware) ───────────────────────────────────
+function scoreSEO(metaTitle, metaDesc, tags, desc, isService = false, isKarungali = false) {
   const titleLen = (metaTitle||"").length, descLen = (metaDesc||"").length;
   const tagCount = (tags||"").split(",").filter(Boolean).length;
   const descText = (desc||"").replace(/<[^>]+>/g,"");
+  let certCheck, descCertCheck;
+  if (isService) {
+    certCheck     = /vedic|puja|homa|vadhyar|mvs/i.test(tags||"");
+    descCertCheck = /mvs|vedapadasala|vadhyar|kanchi/i.test(descText);
+  } else if (isKarungali) {
+    certCheck     = /karungali|ebony|wood|authentic/i.test(tags||"");
+    descCertCheck = /karungali|ebony|diospyros|authentic|wood/i.test(descText);
+  } else {
+    certCheck     = /rkrtl|certified|authentic/i.test(tags||"");
+    descCertCheck = /rkrtl|certified|x-ray/i.test(descText);
+  }
   const checks = [
     titleLen>0, titleLen>=40&&titleLen<=60, /(rudrakailash)/i.test(metaTitle||""),
     descLen>0, descLen>=130&&descLen<=155, /shop|buy|order|get|explore|book/i.test(metaDesc||""),
-    tagCount>0, tagCount>=6,
-    isService ? /vedic|puja|homa|vadhyar|mvs/i.test(tags||"") : /rkrtl|certified|authentic/i.test(tags||""),
+    tagCount>0, tagCount>=6, certCheck,
     descText.length>100, descText.split(/\s+/).length>=300, /<h[23]/i.test(desc||""),
-    isService ? /mvs|vedapadasala|vadhyar|kanchi/i.test(descText) : /rkrtl|certified|x-ray/i.test(descText),
+    descCertCheck,
   ];
   const pts = [10,10,5,10,10,5,5,8,7,10,10,5,5];
   return Math.round(checks.reduce((s,c,i)=>s+(c?pts[i]:0),0)/pts.reduce((s,p)=>s+p,0)*100);
@@ -1201,7 +1245,8 @@ function scoreProduct(product) {
 
   const wordCount=(product.body_html||"").replace(/<[^>]+>/g,"").split(/\s+/).filter(Boolean).length;
   const hasH2H3=/<h[23]/i.test(product.body_html||"");
-  const hasAuth=isSvc?/mvs|vedapadasala|vadhyar/i.test(product.body_html||""):/rkrtl|x-ray|certified/i.test(product.body_html||"");
+  const isKar=isKarungaliProduct(product);
+  const hasAuth=isSvc?/mvs|vedapadasala|vadhyar/i.test(product.body_html||""):isKar?/karungali|ebony|diospyros/i.test(product.body_html||""):/rkrtl|x-ray|certified/i.test(product.body_html||"");
   const hasMetaTitle=!!(product.metafields_global_title_tag);
   const hasMetaDesc=!!(product.metafields_global_description_tag);
 
@@ -1225,7 +1270,7 @@ function scoreProduct(product) {
   if(!posIN)reasons.push("Not ranked — fresh SEO will establish baseline");
   if(wordCount<100)reasons.push("Bare description — thin content penalty risk");
   else if(wordCount<250)reasons.push(`Short description (${wordCount} words)`);
-  if(!hasAuth)reasons.push(isSvc?"No MVS Vedapadasala credentials":"No RKRTL certification language");
+  if(!hasAuth)reasons.push(isSvc?"No MVS Vedapadasala credentials":isKar?"No Karungali/Ebony wood authentication content":"No RKRTL certification language");
   if(!hasMetaTitle)reasons.push("Missing meta title");
   if(!hasMetaDesc)reasons.push("Missing meta description");
   if(notTracked)reasons.push("Not yet in rank tracker");
