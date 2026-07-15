@@ -21,6 +21,8 @@ const PORT = process.env.PORT || 3001;
 const TOKEN_FILE      = path.join(__dirname, ".shopify_token");
 const RANK_DATA_FILE  = path.join(__dirname, ".rank_data.json");
 const KEYWORDS_FILE   = path.join(__dirname, ".keywords.json");
+const CITATION_QUERIES_FILE = path.join(__dirname, ".citation_queries.json");
+const CITATION_DATA_FILE    = path.join(__dirname, ".citation_data.json");
 
 function loadToken() {
   try {
@@ -59,6 +61,30 @@ function loadKeywords() {
 function saveKeywords(data) {
   try { fs.writeFileSync(KEYWORDS_FILE, JSON.stringify(data, null, 2), "utf8"); }
   catch (e) { console.warn("⚠️  Keywords save error:", e.message); }
+}
+
+function loadCitationQueries() {
+  try {
+    if (fs.existsSync(CITATION_QUERIES_FILE)) return JSON.parse(fs.readFileSync(CITATION_QUERIES_FILE, "utf8"));
+  } catch (e) { console.warn("⚠️  Citation queries load error:", e.message); }
+  return {};
+}
+
+function saveCitationQueries(data) {
+  try { fs.writeFileSync(CITATION_QUERIES_FILE, JSON.stringify(data, null, 2), "utf8"); }
+  catch (e) { console.warn("⚠️  Citation queries save error:", e.message); }
+}
+
+function loadCitationData() {
+  try {
+    if (fs.existsSync(CITATION_DATA_FILE)) return JSON.parse(fs.readFileSync(CITATION_DATA_FILE, "utf8"));
+  } catch (e) { console.warn("⚠️  Citation data load error:", e.message); }
+  return {};
+}
+
+function saveCitationData(data) {
+  try { fs.writeFileSync(CITATION_DATA_FILE, JSON.stringify(data, null, 2), "utf8"); }
+  catch (e) { console.warn("⚠️  Citation data save error:", e.message); }
 }
 
 const SHOPIFY_CLIENT_ID     = process.env.SHOPIFY_CLIENT_ID;
@@ -386,6 +412,132 @@ cron.schedule("30 1 * * 1", async () => {
   console.log("📊 Weekly rank report sent.");
 }, { timezone: "UTC" });
 
+// ─── LLM Citation Tracking ─────────────────────────────────────────────────────
+// Asks Claude a real target question WITH live web search enabled, then checks
+// whether rudrakailash.com actually gets surfaced/cited in the grounded answer,
+// and which other domains show up instead. This tests live web-grounded
+// citation behavior, not the model's frozen training data — that distinction
+// matters because a plain (non-search) call would just reflect Claude's
+// knowledge cutoff, not what a real user asking today would actually see.
+// Uses the ANTHROPIC_API_KEY already configured — no new API keys/costs.
+async function checkCitation(query) {
+  const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
+  if (!ANTHROPIC_KEY) throw new Error("ANTHROPIC_API_KEY not configured");
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_KEY.trim(), "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1500,
+      system: "You are a helpful assistant answering a shopper's question with current, accurate information. Search the web as needed. Recommend specific brands, sellers, or websites where relevant, and cite your sources.",
+      messages: [{ role: "user", content: query }],
+      tools: [{ type: "web_search_20250305", name: "web_search" }],
+    }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data?.error?.message || "Anthropic API error");
+
+  let combinedText = "";
+  const citedDomains = new Set();
+
+  for (const block of (data.content || [])) {
+    if (block.type === "text") {
+      combinedText += (block.text || "") + " ";
+      for (const citation of (block.citations || [])) {
+        if (citation.url) { try { citedDomains.add(new URL(citation.url).hostname.replace(/^www\./, "")); } catch (_) {} }
+      }
+    }
+    if (block.type === "web_search_tool_result") {
+      for (const item of (Array.isArray(block.content) ? block.content : [])) {
+        if (item.url) { try { citedDomains.add(new URL(item.url).hostname.replace(/^www\./, "")); } catch (_) {} }
+      }
+    }
+  }
+
+  const mentionedInText = combinedText.toLowerCase().includes("rudrakailash");
+  const mentionedInCitations = [...citedDomains].some(d => d.includes("rudrakailash.com"));
+  const otherDomains = [...citedDomains].filter(d => !d.includes("rudrakailash.com")).sort();
+
+  return {
+    mentioned: mentionedInText || mentionedInCitations,
+    citedDomains: [...citedDomains],
+    otherDomains,
+    responseSnippet: combinedText.trim().slice(0, 1500),
+  };
+}
+
+app.get("/citations/queries", (req, res) => { res.json({ success: true, queries: loadCitationQueries() }); });
+
+app.post("/citations/queries", (req, res) => {
+  const { query, label } = req.body;
+  if (!query) return res.status(400).json({ error: "query required" });
+  const queries = loadCitationQueries();
+  const id = String(Date.now());
+  queries[id] = { id, query, label: label || query, addedAt: new Date().toISOString() };
+  saveCitationQueries(queries);
+  res.json({ success: true, entry: queries[id] });
+});
+
+app.delete("/citations/queries/:id", (req, res) => {
+  const queries = loadCitationQueries();
+  delete queries[req.params.id];
+  saveCitationQueries(queries);
+  res.json({ success: true });
+});
+
+app.get("/citations/data", (req, res) => { res.json({ success: true, citationData: loadCitationData(), queries: loadCitationQueries() }); });
+
+app.post("/citations/check/:id", async (req, res) => {
+  const queries = loadCitationQueries();
+  const entry   = queries[req.params.id];
+  if (!entry) return res.status(404).json({ error: "Query not tracked. Add it first." });
+  res.json({ message: "Citation check started — results in ~15-30 seconds.", query: entry.query });
+  setTimeout(async () => { await checkAndStoreCitation(entry); }, 100);
+});
+
+async function checkAndStoreCitation(entry) {
+  const { id, query, label } = entry;
+  console.log(`🔎 Checking citation: "${query}"`);
+  try {
+    const result   = await checkCitation(query);
+    const today    = new Date().toISOString().split("T")[0];
+    const citationData = loadCitationData();
+    if (!citationData[id]) citationData[id] = { id, query, label, history: [] };
+    citationData[id].history = citationData[id].history.filter(h => h.date !== today);
+    citationData[id].history.push({ date: today, mentioned: result.mentioned, otherDomains: result.otherDomains, responseSnippet: result.responseSnippet, checkedAt: new Date().toISOString() });
+    citationData[id].history = citationData[id].history.sort((a, b) => a.date.localeCompare(b.date)).slice(-52);
+    citationData[id].lastChecked = new Date().toISOString();
+    citationData[id].lastMentioned = result.mentioned;
+    saveCitationData(citationData);
+    console.log(`✅ Citation stored: "${query}" — ${result.mentioned ? "MENTIONED ✅" : "not mentioned ❌"}`);
+    return result;
+  } catch (e) {
+    console.warn(`⚠️  Citation check failed for "${query}":`, e.message);
+    return null;
+  }
+}
+
+// Weekly (not daily) — each check is a real Claude + web search call, so this
+// keeps API cost predictable. Runs Monday 7:30am IST, alongside the existing
+// rank report.
+cron.schedule("0 2 * * 1", async () => {
+  console.log("🔎 Weekly citation check — Monday 7:30am IST");
+  const queries = loadCitationQueries();
+  const entries = Object.values(queries);
+  if (entries.length === 0) { console.log("🔎 No citation queries tracked yet."); return; }
+  for (const entry of entries) { await checkAndStoreCitation(entry); await new Promise(r => setTimeout(r, 3000)); }
+  const citationData = loadCitationData();
+  const rows = Object.values(citationData).map(e => {
+    const latest = e.history[e.history.length - 1];
+    return { label: e.label, mentioned: latest?.mentioned, otherDomains: (latest?.otherDomains || []).slice(0, 4).join(", ") };
+  });
+  const mentionedCount = rows.filter(r => r.mentioned).length;
+  const tableRows = rows.map(r => `<tr style="border-bottom:1px solid #2E1500"><td style="padding:10px 14px;color:#F5E6C8;font-size:13px">${r.label}</td><td style="padding:10px 14px;text-align:center;color:${r.mentioned ? '#7FD48A' : '#F08080'};font-weight:bold">${r.mentioned ? '✅ Cited' : '❌ Not cited'}</td><td style="padding:10px 14px;color:#9A7050;font-size:11px">${r.otherDomains || '—'}</td></tr>`).join("");
+  const emailHtml = `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#0D0500;font-family:Georgia,serif"><div style="max-width:720px;margin:0 auto;padding:32px 20px"><div style="text-align:center;margin-bottom:32px"><div style="font-size:36px">ॐ</div><h1 style="color:#F0C84A;font-size:22px;margin:8px 0">RudraKailash — Weekly LLM Citation Report</h1><p style="color:#9A7050;font-size:13px">${new Date().toLocaleString("en-IN",{timeZone:"Asia/Kolkata"})} IST</p></div><div style="background:#1A0A00;border:1px solid #2E1500;border-radius:10px;padding:20px;margin-bottom:24px"><table width="100%"><tr><td style="text-align:center"><div style="color:#9A7050;font-size:11px;letter-spacing:1px">TRACKED QUERIES</div><div style="color:#F0C84A;font-size:28px;font-weight:bold">${rows.length}</div></td><td style="text-align:center"><div style="color:#9A7050;font-size:11px;letter-spacing:1px">CITED IN</div><div style="color:#7FD48A;font-size:28px;font-weight:bold">${mentionedCount}/${rows.length}</div></td></tr></table></div><table style="width:100%;border-collapse:collapse;background:#120600;border:1px solid #2E1500;border-radius:10px;overflow:hidden"><thead><tr style="background:#160800"><th style="padding:10px 14px;text-align:left;color:#9A7050;font-size:11px;font-weight:normal">QUERY</th><th style="padding:10px 14px;text-align:center;color:#9A7050;font-size:11px;font-weight:normal">RUDRAKAILASH CITED?</th><th style="padding:10px 14px;text-align:left;color:#9A7050;font-size:11px;font-weight:normal">OTHER SOURCES CITED</th></tr></thead><tbody>${tableRows}</tbody></table><div style="text-align:center;margin-top:32px;border-top:1px solid #2E1500;padding-top:20px"><p style="color:#5A3020;font-size:11px">RudraKailash Agentic SEO · LLM Citation Tracker · Weekly, Monday 7:30am IST</p></div></div></body></html>`;
+  await sendEmail(`🔎 RudraKailash Weekly Citation Report — ${mentionedCount}/${rows.length} cited`, emailHtml);
+  console.log("🔎 Weekly citation report sent.");
+}, { timezone: "UTC" });
+
 // ─── Service product detection ────────────────────────────────────────────────
 function isServiceProduct(product) {
   const title = (product.title || "").toLowerCase();
@@ -703,6 +855,37 @@ app.post("/cron/trigger", async (req, res) => {
   }, 100);
 });
 
+app.post("/citations/check-all", async (req, res) => {
+  if (req.query.secret !== SHOPIFY_CLIENT_SECRET) return res.status(403).json({ error: "Forbidden" });
+  const queries = loadCitationQueries();
+  const entries = Object.values(queries);
+  if (entries.length === 0) return res.json({ message: "No citation queries tracked yet. Add some via POST /citations/queries first." });
+  res.json({ message: `Citation check started for ${entries.length} queries — check /citations/dashboard in a minute or two.` });
+  setTimeout(async () => {
+    for (const entry of entries) { await checkAndStoreCitation(entry); await new Promise(r => setTimeout(r, 3000)); }
+    console.log("🔎 Manual citation check-all complete.");
+  }, 100);
+});
+
+app.get("/citations/dashboard", (req, res) => {
+  const citationData = loadCitationData();
+  const rows = Object.values(citationData).sort((a, b) => (a.label || "").localeCompare(b.label || ""));
+  const cards = rows.map(e => {
+    const latest = e.history[e.history.length - 1] || {};
+    const historyStrip = e.history.slice(-12).map(h => `<span title="${h.date}" style="display:inline-block;width:14px;height:14px;margin-right:2px;border-radius:3px;background:${h.mentioned ? '#7FD48A' : '#F08080'}"></span>`).join("");
+    return `<div style="background:#1A0A00;border:1px solid #2E1500;border-radius:10px;padding:18px 20px;margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <div style="color:#F5E6C8;font-size:15px;font-weight:bold">${e.label}</div>
+        <div style="color:${latest.mentioned ? '#7FD48A' : '#F08080'};font-weight:bold;font-size:13px">${latest.mentioned === undefined ? '— not checked yet' : (latest.mentioned ? '✅ Cited' : '❌ Not cited')}</div>
+      </div>
+      <div style="color:#9A7050;font-size:12px;margin:6px 0">"${e.query}"</div>
+      <div style="margin:8px 0">${historyStrip}<span style="color:#5A3020;font-size:10px;margin-left:6px">last ${e.history.length} checks</span></div>
+      ${latest.otherDomains && latest.otherDomains.length ? `<div style="color:#80C0F0;font-size:11px">Also cited: ${latest.otherDomains.join(", ")}</div>` : ""}
+    </div>`;
+  }).join("") || `<div style="color:#9A7050;text-align:center;padding:40px">No citation checks run yet. POST a query to /citations/queries, then POST /citations/check/:id — or trigger all via POST /citations/check-all?secret=...</div>`;
+  res.send(`<!DOCTYPE html><html><body style="margin:0;padding:0;background:#0D0500;font-family:Georgia,serif"><div style="max-width:760px;margin:0 auto;padding:32px 20px"><div style="text-align:center;margin-bottom:28px"><div style="font-size:36px">ॐ</div><h1 style="color:#F0C84A;font-size:22px;margin:8px 0">LLM Citation Tracker</h1><p style="color:#9A7050;font-size:13px">Checked weekly · Monday 7:30am IST</p></div>${cards}</div></body></html>`);
+});
+
 app.listen(PORT, async () => {
   console.log(`🚀 RudraKailash SEO Proxy v8 running on port ${PORT}`);
   console.log(`   Store:         ${SHOPIFY_STORE_DOMAIN}`);
@@ -712,6 +895,7 @@ app.listen(PORT, async () => {
   console.log(`   Email:         ${process.env.EMAIL_SMTP_USER   ? "✅ " + process.env.EMAIL_SMTP_USER : "❌ NOT SET"}`);
   console.log(`   SEO Tool:      ✅ Served at /seo`);
   console.log(`   Rank Tracking: ✅ Daily 6am IST · Weekly report Monday 7am IST`);
+  console.log(`   Citations:     ✅ Weekly Monday 7:30am IST · Dashboard at /citations/dashboard`);
   console.log(`   SEO Cron:      ✅ Sunday 11pm IST`);
   console.log(`   Audit Module:  ${auditModule ? "✅ Loaded" : "⚠️  Not loaded"}`);
   if (storedAccessToken) await registerWebhooks();
