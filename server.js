@@ -235,7 +235,7 @@ app.post("/ai/generate", async (req, res) => {
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_KEY.trim(), "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: "claude-haiku-4-5", max_tokens, system, messages: [{ role: "user", content: user }] }),
+      body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens, system, messages: [{ role: "user", content: user }] }),
     });
     const data = await response.json();
     if (!response.ok) return res.status(response.status).json({ error: "Anthropic error", details: data });
@@ -577,7 +577,7 @@ async function callClaude(system, user, max_tokens = 1200) {
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_KEY.trim(), "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: "claude-haiku-4-5", max_tokens, system, messages: [{ role: "user", content: user }] }),
+    body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens, system, messages: [{ role: "user", content: user }] }),
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error?.message || "Anthropic error");
