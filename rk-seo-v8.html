@@ -752,10 +752,24 @@ async function runAllAgents() {
     if (competitors.length > 0) {
       const compTexts = competitors.map((c,i) => `Competitor ${i+1}:\n${(c.content||c.snippet||"").slice(0,500)}`).join("\n---\n");
       const descPlain0 = (selectedProduct.body_html||"").replace(/<[^>]+>/g,"").slice(0,400);
-      const gapRes = await aiGenerate(
+      // Gap analysis with 25s timeout + 1 automatic retry (mirrors keyword extraction — previously unguarded, causing indefinite hangs on proxy stalls/cold starts)
+      const gapCall = () => aiGenerate(
         `SEO content strategist. Output ONLY a JSON array of strings. No explanation, no markdown.`,
         `Product: "${selectedProduct.title}". Our description: "${descPlain0}". Competitors:\n${compTexts}\nIdentify 5-8 content gaps. Output ONLY JSON array.`, 700
       );
+      let gapRes = "";
+      try {
+        gapRes = await withTimeout(gapCall(), 25000, "Gap analysis");
+      } catch(e1) {
+        console.warn("Gap analysis attempt 1 failed:", e1.message, "— retrying…");
+        setAgent("gaps", "running", "Retrying gap analysis…");
+        try {
+          gapRes = await withTimeout(gapCall(), 25000, "Gap analysis retry");
+        } catch(e2) {
+          console.warn("Gap analysis attempt 2 failed:", e2.message, "— continuing without gaps");
+          gapRes = "";
+        }
+      }
       try { gaps = JSON.parse(gapRes.replace(/^```json\s*/i,"").replace(/\s*```$/,"").trim()); } catch(e) {}
       gapSummary = gaps.length > 0 ? `Fill these gaps: ${gaps.join("; ")}` : gapSummary;
     }
@@ -828,15 +842,17 @@ AI-CITATION (GEO) RULES — applies ONLY to the RKRTL Authentication section, NE
       : `10–12 Shopify tags for "${selectedProduct.title}". Current: "${selectedProduct.tags||"none"}". Include mukhi variants, rudraksha, RKRTL, certified, authentic, x-ray verified, nepali rudraksha or indonesian rudraksha as appropriate, bead bracelet, meditation beads. Avoid deity-specific tags that could trigger GMC identity and belief policy.`;
 
     const faqUser = isService
-      ? `Generate 6 voice-search FAQ pairs for the "${selectedProduct.title}" service on RudraKailash.com.\n\nRules:\n- Natural spoken language questions\n- Answers under 50 words, self-contained, citation-ready\n- Include: what the service is, who performs it (MVS Vedapadasala), how online delivery works, credentials (Kanchi Mutt VRNT), who should book, how to book\n- NO RKRTL certification language — this is a service not a product\n\nOutput ONLY JSON: [{"q":"Question?","a":"Answer under 50 words."},...] 6 items.`
-      : `Generate 6 voice-search FAQ pairs for "${selectedProduct.title}" Rudraksha bead on RudraKailash.com.\n\nRules:\n- Natural spoken language questions\n- Answers under 50 words, self-contained, citation-ready\n- Include: what it is, who should wear it, how to wear it, RKRTL authentication process, botanical origin (Elaeocarpus ganitrus), buying advice\n- Use "seekers report" framing — no direct benefit claims\n- Mention RKRTL X-ray certification\n- Avoid leading with deity names in questions\n\nOutput ONLY JSON: [{"q":"Question?","a":"Answer."},...] 6 items.`;
+      ? `Generate 6 voice-search FAQ pairs for the "${selectedProduct.title}" service on RudraKailash.com.\n\nRules:\n- Natural spoken language questions\n- Answers 80-150 words, fully self-contained so each one stands alone as a citable passage — no dangling references to "as mentioned above"\n- Include: what the service is, who performs it (MVS Vedapadasala), how online delivery works, credentials (Kanchi Mutt VRNT), who should book, how to book\n- NO RKRTL certification language — this is a service not a product\n\nOutput ONLY JSON: [{"q":"Question?","a":"Answer, 80-150 words."},...] 6 items.`
+      : isKarungali
+      ? `Generate 6 voice-search FAQ pairs for "${selectedProduct.title}" on RudraKailash.com.\n\nRules:\n- Natural spoken language questions\n- Answers 80-150 words, fully self-contained so each one stands alone as a citable passage — no dangling references to "as mentioned above"\n- Include: what karungali (ebony) wood is, Diospyros ebenum botanical identity, Shani/Saturn connection, Tamil Nadu/Shaiva Siddhanta origin, how authenticity is verified, care instructions\n- Authentication is by wood grain pattern, density, and species identification — NEVER X-ray, NEVER RKRTL, NEVER Elaeocarpus ganitrus — this is WOOD, not Rudraksha\n- Avoid leading with deity names in questions\n\nOutput ONLY JSON: [{"q":"Question?","a":"Answer, 80-150 words."},...] 6 items.`
+      : `Generate 6 voice-search FAQ pairs for "${selectedProduct.title}" Rudraksha bead on RudraKailash.com.\n\nRules:\n- Natural spoken language questions\n- Answers 80-150 words, fully self-contained so each one stands alone as a citable passage — no dangling references to "as mentioned above"\n- Include: what it is, who should wear it, how to wear it, RKRTL authentication process, botanical origin (Elaeocarpus ganitrus), buying advice\n- Use "seekers report" framing — no direct benefit claims\n- Mention RKRTL X-ray certification\n- Avoid leading with deity names in questions\n\nOutput ONLY JSON: [{"q":"Question?","a":"Answer, 80-150 words."},...] 6 items.`;
 
     const [descResult, titleResult, metaDescResult, tagsResult, faqResult] = await Promise.allSettled([
       aiGenerate(descSystem, descUser, 4000),
       aiGenerate(`SEO specialist. Output ONLY the meta title text. No quotes. No explanation.`, titleUser),
       aiGenerate(`SEO specialist. Output ONLY the meta description text. No quotes. No explanation.`, metaDescUser),
       aiGenerate(`Shopify SEO expert. Output ONLY comma-separated tags. No explanation.`, tagsUser),
-      aiGenerate(`Voice search SEO expert. Output ONLY valid JSON array. No markdown.`, faqUser, 1200),
+      aiGenerate(`Voice search SEO expert. Output ONLY valid JSON array. No markdown.`, faqUser, 2200),
     ]);
 
     const newDesc     = descResult.status     === "fulfilled" ? cleanHTML(descResult.value)    : "<p>Generation failed.</p>";
