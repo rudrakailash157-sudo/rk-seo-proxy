@@ -778,9 +778,10 @@ async function runAllAgents() {
 
     const descPlain  = (selectedProduct.body_html||"").replace(/<[^>]+>/g,"").slice(0,400);
     const isHalfMoon = /half.?moon|1\s*mukhi/i.test(selectedProduct.title);
+    const selfContainedRule = `SELF-CONTAINED SENTENCE RULE (critical for AI/GEO extraction — this determines whether a passage can be lifted into an AI-generated answer): every bullet and every sentence must pass this test — read alone, with no heading and no surrounding text, does it still make complete sense? Concretely: (1) never open a bullet with a bare fragment like "Ruled by Shani (Saturn)…" — give it an explicit subject, e.g. "${selectedProduct.title} is traditionally associated with Shani (Saturn)…"; (2) never start a bullet with a bare pronoun ("It…", "This…") with no stated antecedent in the same sentence — restate the product name or "this bead"/"this mala" instead; (3) each bullet must read as a complete, standalone claim understandable with zero prior context, not a continuation of the heading above it.`;
     const kwPlacement = keywordBrief
-      ? `MANDATORY KEYWORD PLACEMENT:\n${keywordBrief}\n\nRULES:\n- <h2>: include a H1 PRIMARY KEYWORD\n- Opening <p>: include H1 keyword within first 60 words\n- <h3> headings: use H2/H3 KEYWORDS naturally\n- Bullets: address LONG-TAIL INTENT PHRASES as experience statements\n- FAQ: word 2+ questions using exact LONG-TAIL INTENT PHRASE phrasing`
-      : "Use standard SEO keywords appropriate to this product/service.";
+      ? `MANDATORY KEYWORD PLACEMENT:\n${keywordBrief}\n\nRULES:\n- <h2>: include a H1 PRIMARY KEYWORD\n- Opening <p>: include H1 keyword within first 60 words\n- <h3> headings: use H2/H3 KEYWORDS naturally\n- Bullets: address LONG-TAIL INTENT PHRASES as experience statements\n- FAQ: word 2+ questions using exact LONG-TAIL INTENT PHRASE phrasing\n\n${selfContainedRule}`
+      : `Use standard SEO keywords appropriate to this product/service.\n\n${selfContainedRule}`;
 
     setAgent("desc",     "running", "Writing…");
     setAgent("title",    "running", "Writing…");
