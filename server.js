@@ -689,6 +689,29 @@ function cleanAIOutput(text) {
   return text.replace(/^```(?:html)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
 }
 
+// Pulls the JSON payload (object OR array) out of a raw model response,
+// tolerating any preamble/postamble text the model adds despite "output only
+// JSON" instructions, plus ```json code fences. Guards against a class of
+// failure that's otherwise silent: a truncated or lightly-annotated response
+// makes JSON.parse throw, which an empty catch block previously swallowed
+// with zero trace. Used everywhere a model call expects JSON back: keyword
+// extraction, gap analysis, FAQ generation, SGE analysis, cannibalization.
+function extractJsonValue(text) {
+  const stripped = (text || "").replace(/^```json\s*/i, "").replace(/```\s*$/i, "").trim();
+  const firstBrace   = stripped.indexOf("{");
+  const firstBracket = stripped.indexOf("[");
+  let openChar, closeChar, start;
+  if (firstBrace === -1 && firstBracket === -1) return stripped; // no JSON found; let JSON.parse throw naturally
+  if (firstBracket !== -1 && (firstBrace === -1 || firstBracket < firstBrace)) {
+    closeChar = "]"; start = firstBracket;
+  } else {
+    closeChar = "}"; start = firstBrace;
+  }
+  const end = stripped.lastIndexOf(closeChar);
+  if (end === -1 || end < start) return stripped;
+  return stripped.slice(start, end + 1);
+}
+
 async function callClaude(system, user, max_tokens = 1200) {
   const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
   const response = await fetch("https://api.anthropic.com/v1/messages", {
@@ -755,10 +778,10 @@ async function runSEOPipeline(product) {
 
       const kwRaw = await callClaude(
         `You are an SEO keyword analyst. Output ONLY valid JSON. No markdown. No explanation.`,
-        `Extract SEO keywords from these ${competitors.length} competitor pages for "${product.title}" on RudraKailash.com.\n\n${compHeadingInput}\n\nExtract:\n1. h1Keywords: Primary keywords from competitor H1 tags (max 8, exact phrases)\n2. h2h3Keywords: Sub-topic LSI keywords from H2/H3 headings (max 12, exact phrases)\n3. intentPhrases: Recurring long-tail intent phrases from body text across 2+ competitors (max 10)\n\nOutput ONLY:\n{"h1":["phrase1"],"h2h3":["phrase1"],"phrases":["phrase1"]}`, 800
+        `Extract SEO keywords from these ${competitors.length} competitor pages for "${product.title}" on RudraKailash.com.\n\n${compHeadingInput}\n\nExtract:\n1. h1Keywords: Primary keywords from competitor H1 tags (max 8, exact phrases)\n2. h2h3Keywords: Sub-topic LSI keywords from H2/H3 headings (max 12, exact phrases)\n3. intentPhrases: Recurring long-tail intent phrases from body text across 2+ competitors (max 10)\n\nOutput ONLY:\n{"h1":["phrase1"],"h2h3":["phrase1"],"phrases":["phrase1"]}`, 1500
       );
       try {
-        const kw = JSON.parse(kwRaw.replace(/^```json\s*/i,"").replace(/\s*```$/,"").trim());
+        const kw = JSON.parse(extractJsonValue(kwRaw));
         extractedKeywords = { h1: kw.h1||[], h2h3: kw.h2h3||[], phrases: kw.phrases||[] };
         const h1List = extractedKeywords.h1.slice(0,5).join(" / ");
         const h2h3List = extractedKeywords.h2h3.slice(0,8).join(", ");
@@ -768,7 +791,7 @@ async function runSEOPipeline(product) {
           h2h3List   ? `H2/H3 SUB-TOPIC KEYWORDS (use as or inside <h3> headings — naturally, not forced): ${h2h3List}` : "",
           phraseList ? `LONG-TAIL INTENT PHRASES (weave into bullets and FAQ questions): ${phraseList}` : "",
         ].filter(Boolean).join("\n");
-      } catch(e) { console.warn("Keyword JSON parse failed:", e.message); keywordBrief = ""; }
+      } catch(e) { console.warn("Keyword JSON parse failed:", e.message, "— raw response (first 300 chars):", kwRaw.slice(0, 300)); keywordBrief = ""; }
     } catch(e) { console.warn("Keyword extraction failed:", e.message); }
   }
 
@@ -778,9 +801,9 @@ async function runSEOPipeline(product) {
       const compTexts = competitors.map((c,i) => `Competitor ${i+1} (${c.url}):\n${(c.content||c.snippet).slice(0,500)}`).join("\n\n---\n\n");
       const gapRaw = await callClaude(`SEO strategist. Output ONLY JSON array of gap strings.`, `Product: "${product.title}". Our: "${descPlain}". Competitors:\n${compTexts}\nIdentify 5-8 gaps. Output ONLY JSON array.`, 700);
       try {
-        const gaps = JSON.parse(gapRaw.replace(/^```json\s*/i,"").replace(/\s*```$/,"").trim());
+        const gaps = JSON.parse(extractJsonValue(gapRaw));
         gapSummary = `Fill: ${gaps.join("; ")}`;
-      } catch(e) { gapSummary = gapRaw.slice(0,300); }
+      } catch(e) { console.warn("Gap analysis JSON parse failed:", e.message, "— falling back to raw text"); gapSummary = gapRaw.slice(0,300); }
     } catch(e) { console.warn("Gap analysis failed:", e.message); }
   }
 
