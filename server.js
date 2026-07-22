@@ -684,6 +684,8 @@ LOCKED DEFINITION (mandatory): On first mention of RKRTL anywhere in the output,
 
 OPENING PARAGRAPH ORDER (mandatory — this is a purchase-intent page, not an encyclopedia entry): (1) lead with the primary traditional use-case or astrological remedy that drives the purchase — never lead with species/botanical identification; (2) state certification per the LOCKED DEFINITION rule above; (3) origin/species/structural detail comes last, framed as evidence supporting the certification claim. BANNED opening pattern: "The [N] Mukhi Rudraksha is a [N]-faced bead from the Elaeocarpus ganitrus tree…" — do not use this or close variants.
 
+MEASUREMENT ACCURACY RULE (mandatory): Never state a specific bead size (mm) or weight (grams) as fact anywhere in the output — intro, bullets, or FAQ — unless that exact figure appears in CURRENT DESCRIPTION below. Nothing in this prompt is fed real Shopify variant data, so any size/weight you generate is invented, not accurate, and risks contradicting the actual variant the customer selects. If no size/weight appears in CURRENT DESCRIPTION, omit specific measurements entirely and let the product's variant selector convey size instead.
+
 LENGTH RULE: Each section MAX 4 lines of prose. If a section needs more than 4 lines, use a <ul> bullet list instead of a paragraph. Keep total description under 600 words. Output clean HTML only. No markdown. No preamble.`;
 
   // ── Description user prompt — three-way branch ────────────────────────────
