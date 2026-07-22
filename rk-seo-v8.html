@@ -827,7 +827,7 @@ async function runAllAgents() {
       // Keyword extraction with 25s timeout + 1 automatic retry
       const kwCall = () => aiGenerate(
         `You are an SEO keyword analyst. Output ONLY valid JSON. No markdown. No explanation.`,
-        `Extract SEO keywords from these ${competitors.length} competitor pages for "${selectedProduct.title}" on RudraKailash.com.\n\n${compHeadingInput}\n\nOutput ONLY:\n{"h1":["phrase1"],"h2h3":["phrase1"],"phrases":["phrase1"]}`, 800
+        `Extract SEO keywords from these ${competitors.length} competitor pages for "${selectedProduct.title}" on RudraKailash.com.\n\n${compHeadingInput}\n\nExtract:\n1. h1Keywords: Primary keywords from competitor H1 tags (max 8, exact phrases)\n2. h2h3Keywords: Sub-topic LSI keywords from H2/H3 headings (max 12, exact phrases)\n3. intentPhrases: Recurring long-tail intent phrases from body text across 2+ competitors (max 10)\n\nOutput ONLY:\n{"h1":["phrase1"],"h2h3":["phrase1"],"phrases":["phrase1"]}`, 1500
       );
       let kwRaw = "";
       try {
@@ -842,7 +842,11 @@ async function runAllAgents() {
           kwRaw = "";
         }
       }
-      try { extractedKeywords = JSON.parse(kwRaw.replace(/^```json\s*/i,"").replace(/\s*```$/,"").trim()); } catch(e) {}
+      try {
+        extractedKeywords = JSON.parse(extractJsonValue(kwRaw));
+      } catch(e) {
+        console.warn("Keyword JSON parse failed:", e.message, "— raw response (first 300 chars):", kwRaw.slice(0, 300));
+      }
     }
     renderKeywords(extractedKeywords);
     const totalKw = (extractedKeywords.h1||[]).length + (extractedKeywords.h2h3||[]).length + (extractedKeywords.phrases||[]).length;
@@ -881,7 +885,7 @@ async function runAllAgents() {
           gapRes = "";
         }
       }
-      try { gaps = JSON.parse(gapRes.replace(/^```json\s*/i,"").replace(/\s*```$/,"").trim()); } catch(e) {}
+      try { gaps = JSON.parse(extractJsonValue(gapRes)); } catch(e) { console.warn("Gap analysis JSON parse failed:", e.message, "— raw response (first 300 chars):", gapRes.slice(0, 300)); }
       gapSummary = gaps.length > 0 ? `Fill these gaps: ${gaps.join("; ")}` : gapSummary;
     }
     renderGaps(gaps);
@@ -985,8 +989,8 @@ AI-CITATION (GEO) RULES — applies ONLY to the RKRTL Authentication section, NE
     setAgent("tags",     tagsResult.status     === "fulfilled" ? "done" : "error", tagsResult.status     === "fulfilled" ? "✓ Done" : "✗ Failed");
 
     if (faqResult.status === "fulfilled") {
-      try { generatedFAQs = JSON.parse(faqResult.value.replace(/^```json\s*/i,"").replace(/\s*```$/,"").trim()); setAgent("faq","done",`✓ ${generatedFAQs.length} Q&As`); }
-      catch(e) { generatedFAQs = []; setAgent("faq","error","✗ Parse failed"); }
+      try { generatedFAQs = JSON.parse(extractJsonValue(faqResult.value)); setAgent("faq","done",`✓ ${generatedFAQs.length} Q&As`); }
+      catch(e) { generatedFAQs = []; setAgent("faq","error","✗ Parse failed"); console.warn("FAQ JSON parse failed:", e.message, "— raw response (first 300 chars):", faqResult.value.slice(0, 300)); }
     } else { setAgent("faq","error","✗ Failed"); }
 
     document.getElementById("currentMetaTitle").textContent = selectedProduct.metafields_global_title_tag || "(not set)";
@@ -1038,6 +1042,29 @@ function withTimeout(promise, ms, label = "Operation") {
 }
 
 function cleanHTML(text) { return text.replace(/^```(?:html)?\s*/i,"").replace(/\s*```\s*$/,"").trim(); }
+
+// Pulls the JSON payload (object OR array) out of a raw model response,
+// tolerating any preamble/postamble text the model adds despite "output only
+// JSON" instructions, plus ```json code fences. Guards against a class of
+// failure that's otherwise silent: a truncated or lightly-annotated response
+// makes JSON.parse throw, which an empty catch block previously swallowed
+// with zero trace. Used everywhere a model call expects JSON back: keyword
+// extraction, gap analysis, FAQ generation, SGE analysis, cannibalization.
+function extractJsonValue(text) {
+  const stripped = (text || "").replace(/^```json\s*/i, "").replace(/```\s*$/i, "").trim();
+  const firstBrace   = stripped.indexOf("{");
+  const firstBracket = stripped.indexOf("[");
+  let openChar, closeChar, start;
+  if (firstBrace === -1 && firstBracket === -1) return stripped; // no JSON found; let JSON.parse throw naturally
+  if (firstBracket !== -1 && (firstBrace === -1 || firstBracket < firstBrace)) {
+    closeChar = "]"; start = firstBracket;
+  } else {
+    closeChar = "}"; start = firstBrace;
+  }
+  const end = stripped.lastIndexOf(closeChar);
+  if (end === -1 || end < start) return stripped;
+  return stripped.slice(start, end + 1);
+}
 
 // ─── FAQ Render ───────────────────────────────────────────────────────────────
 function renderFAQSection(faqs) {
@@ -1103,7 +1130,7 @@ async function runSGEAnalysis(descHtml, productTitle, isService = false) {
       `You are an AI search citation analyst. Output ONLY valid JSON. No markdown.`,
       `Analyse this ${isService ? "service page" : "product page"} for Google SGE citation probability.\n\nProduct: "${productTitle}"\nContent: "${descText.slice(0,2000)}"\n\nScore 5 passage types (1-10):\n1. "Definition/What it is"\n2. "Spiritual/Traditional significance"\n3. "${isService ? "Vadhyar credentials/Authenticity" : "Authentication/Certification"}"\n4. "Who should use it"\n5. "${isService ? "How the service works" : "How to use/wear it"}"\n\nOutput ONLY JSON:\n{"passages":[{"type":"...","score":0,"reason":"..."}],"overallScore":0,"verdict":"High","improvements":["...","...","..."]}`, 1000
     );
-    const sgeData = JSON.parse(sgeRaw.replace(/^```json\s*/i,"").replace(/\s*```$/,"").trim());
+    const sgeData = JSON.parse(extractJsonValue(sgeRaw));
     renderSGEAnalysis(sgeData);
   } catch(e) { document.getElementById("sgePassageList").innerHTML = '<div class="text-muted">SGE analysis unavailable.</div>'; }
 }
@@ -1227,7 +1254,7 @@ async function runCannibalizationCheck() {
       const batch = products.slice(i, i+batchSize);
       const raw = await aiGenerate(`Shopify SEO cannibalization analyst. Output ONLY valid JSON array. No markdown.`,
         `Analyse these ${batch.length} products for keyword cannibalization:\n${batch.map((p,idx)=>`${i+idx+1}. "${p.title}" | Tags: ${(p.tags||"").split(",").slice(0,8).join(", ")||"none"}`).join("\n")}\n\nOutput ONLY JSON: [{"products":["title1","title2"],"sharedKeywords":["kw1"],"severity":"high","recommendation":"fix"}] or []`, 2000);
-      try { allConflicts.push(...JSON.parse(raw.replace(/^```json\s*/i,"").replace(/\s*```$/,"").trim())); } catch(e) {}
+      try { allConflicts.push(...JSON.parse(extractJsonValue(raw))); } catch(e) { console.warn("Cannibalization JSON parse failed:", e.message, "— raw response (first 300 chars):", raw.slice(0, 300)); }
       if (i+batchSize < products.length) await new Promise(r=>setTimeout(r,1000));
     }
     const affectedTitles = new Set(); allConflicts.forEach(c=>c.products.forEach(p=>affectedTitles.add(p)));
