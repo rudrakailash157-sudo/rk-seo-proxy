@@ -603,8 +603,8 @@ function scoreSEO(metaTitle, metaDesc, tags, desc, isService = false, isKarungal
   }
 
   const checks = [
-    titleLen>0, titleLen>=40&&titleLen<=60, /(rudrakailash)/i.test(metaTitle||""),
-    descLen>0, descLen>=130&&descLen<=155, /shop|buy|order|get|explore|book/i.test(metaDesc||""),
+    titleLen>0, titleLen>=40&&titleLen<=75, /(rudrakailash)/i.test(metaTitle||""),
+    descLen>0, descLen>=130&&descLen<=165, /shop|buy|order|get|explore|book/i.test(metaDesc||""),
     tagCount>0, tagCount>=6, certCheck,
     descText.length>100, descText.split(/\s+/).length>=300, /<h[23]/i.test(desc||""),
     descCertCheck,
@@ -700,13 +700,13 @@ LENGTH RULE: Each section MAX 4 lines of prose. If a section needs more than 4 l
     ? `Write a meta title for "${product.title}" service on RudraKailash.com. Max 60 chars. Include service keyword + "RudraKailash". Do NOT mention RKRTL or certification.`
     : isKarungali
     ? `Write a meta title for "${product.title}" on RudraKailash.com. Max 60 chars. Include "Karungali" or "Ebony" + "RudraKailash". Do NOT mention RKRTL or X-ray.`
-    : `Write a meta title for "${product.title}" on RudraKailash.com. Max 60 chars. Include main keyword + brand name "RudraKailash".`;
+    : `Write a meta title for "${product.title}" on RudraKailash.com. LOCKED FORMAT — use this exact template for every single-mukhi Rudraksha product, substituting only the mukhi number, with identical wording and identical pipe spacing every time: "{N} Mukhi Rudraksha | Natural Nepali Bead | RKRTL Certified | RudraKailash". Example for 7 Mukhi: "7 Mukhi Rudraksha | Natural Nepali Bead | RKRTL Certified | RudraKailash". Do not deviate from this template, add extra words, or reorder segments. Expected length is approximately 70-73 characters — this is intentional, do not shorten it to fit under 60.`;
 
   const metaDescUser = isService
     ? `Write a meta description for "${product.title}" service on RudraKailash.com. 145–155 characters. Mention MVS Vedapadasala vadhyars, authentic Vedic tradition, and include a booking CTA. Do NOT mention RKRTL.`
     : isKarungali
     ? `Write a meta description for "${product.title}" on RudraKailash.com. 145–155 characters. Mention authentic Karungali ebony wood, Tamil Nadu origin, Shani remedy, and include a buy CTA. Do NOT mention RKRTL or X-ray certification.`
-    : `Write a meta description for "${product.title}" on RudraKailash.com. 145–155 characters. Mention RKRTL certified and include a call to action.`;
+    : `Write a meta description for "${product.title}" on RudraKailash.com. Approximately 145–160 characters. Structure: [mukhi count + Nepali/Indonesian origin, e.g. "Genuine Nepali 7 Mukhi Rudraksha"] + [RKRTL X-ray certified] + [unique benefit in neutral language] + [CTA: Shop/Buy/Order]. NEVER state a specific bead size in mm — natural size ranges vary widely by mukhi count and origin (e.g. Nepali 7 Mukhi typically runs 15-30mm depending on the specimen) and current inventory varies by batch, so any invented mm figure risks being factually wrong. STRICT RULES: NO deity names. NO spiritual benefit claims like "attracts wealth" or "removes negativity". Position as a certified natural bead. Example structure: "Genuine Nepali 5 Mukhi Rudraksha, RKRTL X-ray certified for authenticity. Worn for clarity and calm. Buy authentic — RudraKailash."`;
 
   const tagsUser = isService
     ? `Generate 10–12 Shopify product tags for the "${product.title}" service on RudraKailash.com. Current tags: "${product.tags||"none"}". Include: online puja, vedic service, MVS Vedapadasala, homa/puja type, coimbatore vadhyar, authentic vedic ritual, book online.`
