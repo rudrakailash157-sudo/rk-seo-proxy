@@ -643,6 +643,47 @@ function buildMukhiFactsBlock(facts) {
   return lines.join("\n") + "\n";
 }
 
+// ─── Deity-presence safety net ────────────────────────────────────────────────
+// The prompt has repeatedly failed to reliably include the required deity name
+// in the description body — even with an explicit "MUST appear" instruction
+// and a worked compliant example, the model still omitted "Mahalakshmi" from
+// 7 Mukhi's live output (July 2026). The theory: the system prompt is dense
+// with repeated "NEVER use deity names" warnings, and the single positive
+// requirement gets drowned out by that volume regardless of wording. Rather
+// than keep tuning prompt language against an unreliable behavior, this
+// verifies the requirement in code after generation and deterministically
+// injects a compliant sentence if the model still dropped it.
+function ensureDeityPresent(html, facts, productTitle) {
+  if (!facts || !facts.deity || !html) return html;
+  // Use the most distinctive word in the deity name for the presence check
+  // (e.g. "Mahalakshmi" rather than the generic "Goddess") so a near-miss
+  // paraphrase doesn't falsely count as compliant.
+  const words = facts.deity.replace(/[()]/g, "").split(/\s+/).filter(w => w.length > 3);
+  const checkWord = words[words.length - 1] || facts.deity;
+  const escaped = checkWord.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const present = new RegExp(escaped, "i").test(html);
+  if (present) return html;
+
+  console.warn(`⚠️  Deity name "${facts.deity}" missing from generated description for "${productTitle}" — injecting compliant sentence (model failed to follow the MUST-appear rule)`);
+  const sentence = `Seekers traditionally associate ${productTitle} with ${facts.deity}${facts.additionalAssociations ? `, ${facts.additionalAssociations}` : ""}.`;
+
+  // Prefer inserting as a new bullet inside the Vedic Tradition & Significance
+  // (or Spiritual Significance) <ul>, immediately after its heading.
+  const ulRe = /(<h3>(?:Vedic Tradition|Spiritual Significance)[^<]*<\/h3>\s*<ul>)/i;
+  if (ulRe.test(html)) return html.replace(ulRe, `$1<li>${sentence}</li>`);
+
+  // Fallback: that section used prose instead of a bullet list — append a
+  // sentence directly after its heading.
+  const headingRe = /(<h3>(?:Vedic Tradition|Spiritual Significance)[^<]*<\/h3>)/i;
+  if (headingRe.test(html)) return html.replace(headingRe, `$1<p>${sentence}</p>`);
+
+  // Last resort: couldn't find the expected section at all — prepend right
+  // after the opening <h2> so the fact isn't lost entirely.
+  const h2Re = /(<\/h2>)/i;
+  if (h2Re.test(html)) return html.replace(h2Re, `$1<p>${sentence}</p>`);
+  return html;
+}
+
 // ─── SEO Pipeline ─────────────────────────────────────────────────────────────
 function cleanAIOutput(text) {
   return text.replace(/^```(?:html)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
@@ -808,7 +849,7 @@ LENGTH RULE: Each section MAX 4 lines of prose. If a section needs more than 4 l
   ]);
 
   const result = {
-    description: description.status === "fulfilled" ? description.value : "<p>Generation failed. Please re-run the agent.</p>",
+    description: description.status === "fulfilled" ? ensureDeityPresent(description.value, mukhiFacts, product.title) : "<p>Generation failed. Please re-run the agent.</p>",
     metaTitle:   metaTitle.status   === "fulfilled" ? metaTitle.value   : product.title,
     metaDesc:    metaDesc.status    === "fulfilled" ? metaDesc.value    : "",
     tags:        tags.status        === "fulfilled" ? tags.value        : product.tags || "",
