@@ -684,6 +684,67 @@ function ensureDeityPresent(html, facts, productTitle) {
   return html;
 }
 
+// ─── FAQ formatting safety net ────────────────────────────────────────────────
+// The prompt asked for an exact bold+numbered HTML template for the FAQ
+// section (inline-styled, so it renders correctly regardless of theme CSS —
+// see the earlier <dl>/<dt>/<dd> wall-of-text bug). That instruction didn't
+// reliably survive generation either — same unreliable-instruction-following
+// pattern as the deity-name omission. Rather than keep tuning prompt wording
+// against it, this normalizes whatever markup came back (styled or not,
+// <dl>-based or plain paragraphs) and deterministically rebuilds the FAQ
+// section in the guaranteed format.
+function escapeFaqText(str) {
+  return (str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function reformatFaqSection(html) {
+  if (!html) return html;
+  const headingRe = /<h3>\s*Frequently Asked Questions[^<]*<\/h3>/i;
+  const headingMatch = html.match(headingRe);
+  if (!headingMatch) return html; // no FAQ section found — nothing to fix
+
+  const startIdx = headingMatch.index + headingMatch[0].length;
+  const faqBody = html.slice(startIdx); // FAQ is always the last section in every branch's template
+
+  // Convert block-level boundaries to newlines BEFORE stripping the rest of
+  // the tags, so each original paragraph/list-item/definition stays on its
+  // own line — this works whether the source used <dl>/<dt>/<dd>, plain <p>
+  // tags, or the (ignored) styled <div> template.
+  const withBreaks = faqBody
+    .replace(/<\/(p|dd|dt|li|div)>/gi, "\n")
+    .replace(/<br\s*\/?>/gi, "\n");
+  const plainLines = withBreaks
+    .replace(/<[^>]+>/g, "")
+    .split("\n")
+    .map(l => l.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  if (plainLines.length === 0) return html;
+
+  // A line ending in "?" starts a new question; subsequent non-question
+  // lines are appended to that question's answer, matching how the model
+  // actually structures this content (question, then its full answer,
+  // repeated) regardless of whether the markup around it was styled.
+  const pairs = [];
+  let current = null;
+  for (const line of plainLines) {
+    const isNumberedQuestionLine = /^\d+\.\s*.*\?\s*$/.test(line);
+    const isPlainQuestionLine = /\?\s*$/.test(line);
+    if (isNumberedQuestionLine || isPlainQuestionLine) {
+      current = { question: line.replace(/^\d+\.\s*/, ""), answer: "" };
+      pairs.push(current);
+    } else if (current) {
+      current.answer = current.answer ? `${current.answer} ${line}` : line;
+    }
+  }
+  const complete = pairs.filter(p => p.question && p.answer);
+  if (complete.length === 0) return html; // couldn't parse — leave the original untouched rather than risk corrupting it
+
+  const rebuilt = complete.map((p, i) =>
+    `<div style="margin-bottom:20px"><p style="font-weight:bold;margin:0 0 6px 0">${i + 1}. ${escapeFaqText(p.question)}</p><p style="margin:0">${escapeFaqText(p.answer)}</p></div>`
+  ).join("");
+
+  return html.slice(0, startIdx) + rebuilt;
+}
+
 // ─── SEO Pipeline ─────────────────────────────────────────────────────────────
 function cleanAIOutput(text) {
   return text.replace(/^```(?:html)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
@@ -872,7 +933,7 @@ LENGTH RULE: Each section MAX 4 lines of prose. If a section needs more than 4 l
   ]);
 
   const result = {
-    description: description.status === "fulfilled" ? ensureDeityPresent(description.value, mukhiFacts, product.title) : "<p>Generation failed. Please re-run the agent.</p>",
+    description: description.status === "fulfilled" ? reformatFaqSection(ensureDeityPresent(description.value, mukhiFacts, product.title)) : "<p>Generation failed. Please re-run the agent.</p>",
     metaTitle:   metaTitle.status   === "fulfilled" ? metaTitle.value   : product.title,
     metaDesc:    metaDesc.status    === "fulfilled" ? metaDesc.value    : "",
     tags:        tags.status        === "fulfilled" ? tags.value        : product.tags || "",
