@@ -413,13 +413,6 @@ cron.schedule("30 1 * * 1", async () => {
 }, { timezone: "UTC" });
 
 // ─── LLM Citation Tracking ─────────────────────────────────────────────────────
-// Asks Claude a real target question WITH live web search enabled, then checks
-// whether rudrakailash.com actually gets surfaced/cited in the grounded answer,
-// and which other domains show up instead. This tests live web-grounded
-// citation behavior, not the model's frozen training data — that distinction
-// matters because a plain (non-search) call would just reflect Claude's
-// knowledge cutoff, not what a real user asking today would actually see.
-// Uses the ANTHROPIC_API_KEY already configured — no new API keys/costs.
 async function checkCitation(query) {
   const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
   if (!ANTHROPIC_KEY) throw new Error("ANTHROPIC_API_KEY not configured");
@@ -517,9 +510,6 @@ async function checkAndStoreCitation(entry) {
   }
 }
 
-// Weekly (not daily) — each check is a real Claude + web search call, so this
-// keeps API cost predictable. Runs Monday 7:30am IST, alongside the existing
-// rank report.
 cron.schedule("0 2 * * 1", async () => {
   console.log("🔎 Weekly citation check — Monday 7:30am IST");
   const queries = loadCitationQueries();
@@ -553,8 +543,6 @@ function isServiceProduct(product) {
 }
 
 // ─── Karungali product detection ─────────────────────────────────────────────
-// Returns true for Karungali (Ebony) wood products — NOT Rudraksha beads
-// These get wood-authentication content, NOT RKRTL X-ray language
 function isKarungaliProduct(product) {
   const title = (product.title || "").toLowerCase();
   const tags  = (product.tags  || "").toLowerCase();
@@ -565,6 +553,84 @@ function isKarungaliProduct(product) {
     "diospyros ebenum", "karungali kattai",
   ];
   return karungaliKeywords.some(kw => title.includes(kw) || tags.includes(kw) || body.includes(kw));
+}
+
+// ─── Origin resolution ─────────────────────────────────────────────────────────
+// Returns the verified geographic origin for a given Rudraksha bead/mala,
+// confirmed by Subbu against actual sourcing (July 2026). This replaces a
+// prior system-prompt rule that hardcoded EVERY product's origin as Nepal
+// ("...it MUST match the site's single canonical sourcing line: 'sourced
+// directly from Rudraksha tree farmers in Nepal.' NEVER introduce alternate
+// origin phrasing...") — that rule was simply wrong for several specific
+// products, and worse, it directly contradicted the separate isHalfMoon
+// special-case note that told the model 1 Mukhi Half-Moon is South Indian.
+// Both instructions fired in the same prompt, producing live content that
+// asserted both origins in the same paragraph (1 Mukhi Half-Moon FAQ, July
+// 2026). Fields left undefined must not be invented downstream — omit
+// rather than guess.
+//
+// isMala: true for mala/rosary products (multiple beads strung together),
+// false for a single loose bead. Origin differs by product FORM, not just
+// mukhi count — e.g. 5 Mukhi single beads are Nepal, but 5 Mukhi malas are
+// Indonesian (Java), reflecting actual sourcing/wholesale reality.
+function resolveOrigin(title, isMala) {
+  const t = (title || "").toLowerCase();
+  const mukhiMatch = t.match(/(\d{1,2})\s*mukhi/);
+  const mukhi = mukhiMatch ? parseInt(mukhiMatch[1], 10) : null;
+  const isHalfMoonShape = /half.?moon/.test(t);
+
+  if (!isMala) {
+    if (mukhi === 1 && isHalfMoonShape) {
+      return {
+        region: "South India",
+        sourcingLine: "this Half-Moon form is sourced from South India — the authentic, scripturally valid form of 1 Mukhi available today, since the round Nepali 1 Mukhi is virtually non-existent in nature",
+        metaShort: "South Indian",
+      };
+    }
+    if (mukhi === 1) {
+      // Round 1 Mukhi — genuinely rare, Nepal-origin
+      return { region: "Nepal", sourcingLine: "sourced directly from Rudraksha tree farmers in Nepal", metaShort: "Nepali" };
+    }
+    if (mukhi === 2) {
+      return {
+        region: "Haridwar variety (Himalayan, Uttarakhand)",
+        sourcingLine: "sourced from the Haridwar variety, grown in the Himalayan foothills of Uttarakhand — distinct from the Nepal-origin varieties",
+        metaShort: "Haridwar",
+      };
+    }
+    if (mukhi !== null && mukhi >= 3 && mukhi <= 14) {
+      return { region: "Nepal", sourcingLine: "sourced directly from Rudraksha tree farmers in Nepal", metaShort: "Nepali" };
+    }
+    if (/gauri\s*shankar/.test(t) || /ganesh(a)?\s*rudraksha/.test(t)) {
+      return { region: "Nepal", sourcingLine: "sourced directly from Rudraksha tree farmers in Nepal", metaShort: "Nepali" };
+    }
+    return null; // uncatalogued single bead — do not assert an origin
+  } else {
+    if (mukhi !== null && mukhi >= 2 && mukhi <= 10) {
+      return { region: "Indonesia (Java)", sourcingLine: "sourced from Java, Indonesia", metaShort: "Indonesian" };
+    }
+    if (mukhi !== null && mukhi >= 11 && mukhi <= 14) {
+      return { notStocked: true }; // 11-14 Mukhi malas are not currently stocked
+    }
+    return null; // mixed-mukhi or unspecified mala — do not assert an origin
+  }
+}
+
+function isMalaProduct(title) {
+  return /\bmala\b/i.test(title || "");
+}
+
+// Builds the VERIFIED ORIGIN prompt block. Mirrors buildMukhiFactsBlock's
+// pattern: state exactly what's known, explicitly forbid inventing/defaulting
+// when nothing is known, rather than silently falling back to Nepal.
+function buildOriginBlock(origin) {
+  if (!origin) {
+    return `ORIGIN: No verified origin mapping exists for this specific product. Do NOT default to Nepal or any other origin — state origin only if it is already present in CURRENT DESCRIPTION below, otherwise omit origin claims entirely rather than guess.\n`;
+  }
+  if (origin.notStocked) {
+    return `ORIGIN WARNING: This mukhi count in mala form is not currently stocked by RudraKailash (per Subbu, July 2026 — very low customer demand, primarily wholesaler-pushed). Do not generate a sourcing claim for this product; flag it for manual review instead.\n`;
+  }
+  return `VERIFIED ORIGIN (mandatory): ${origin.sourcingLine}. Whenever origin is mentioned anywhere in the output — opening paragraph, meta title, meta description, tags, or FAQ — it MUST use this exact origin consistently. Do NOT default to Nepal or introduce any other origin not stated here.\n`;
 }
 
 // ─── Canonical Mukhi Facts Table ──────────────────────────────────────────────
@@ -644,20 +710,8 @@ function buildMukhiFactsBlock(facts) {
 }
 
 // ─── Deity-presence safety net ────────────────────────────────────────────────
-// The prompt has repeatedly failed to reliably include the required deity name
-// in the description body — even with an explicit "MUST appear" instruction
-// and a worked compliant example, the model still omitted "Mahalakshmi" from
-// 7 Mukhi's live output (July 2026). The theory: the system prompt is dense
-// with repeated "NEVER use deity names" warnings, and the single positive
-// requirement gets drowned out by that volume regardless of wording. Rather
-// than keep tuning prompt language against an unreliable behavior, this
-// verifies the requirement in code after generation and deterministically
-// injects a compliant sentence if the model still dropped it.
 function ensureDeityPresent(html, facts, productTitle) {
   if (!facts || !facts.deity || !html) return html;
-  // Use the most distinctive word in the deity name for the presence check
-  // (e.g. "Mahalakshmi" rather than the generic "Goddess") so a near-miss
-  // paraphrase doesn't falsely count as compliant.
   const words = facts.deity.replace(/[()]/g, "").split(/\s+/).filter(w => w.length > 3);
   const checkWord = words[words.length - 1] || facts.deity;
   const escaped = checkWord.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -667,32 +721,18 @@ function ensureDeityPresent(html, facts, productTitle) {
   console.warn(`⚠️  Deity name "${facts.deity}" missing from generated description for "${productTitle}" — injecting compliant sentence (model failed to follow the MUST-appear rule)`);
   const sentence = `Seekers traditionally associate ${productTitle} with ${facts.deity}${facts.additionalAssociations ? `, ${facts.additionalAssociations}` : ""}.`;
 
-  // Prefer inserting as a new bullet inside the Vedic Tradition & Significance
-  // (or Spiritual Significance) <ul>, immediately after its heading.
   const ulRe = /(<h3>(?:Vedic Tradition|Spiritual Significance)[^<]*<\/h3>\s*<ul>)/i;
   if (ulRe.test(html)) return html.replace(ulRe, `$1<li>${sentence}</li>`);
 
-  // Fallback: that section used prose instead of a bullet list — append a
-  // sentence directly after its heading.
   const headingRe = /(<h3>(?:Vedic Tradition|Spiritual Significance)[^<]*<\/h3>)/i;
   if (headingRe.test(html)) return html.replace(headingRe, `$1<p>${sentence}</p>`);
 
-  // Last resort: couldn't find the expected section at all — prepend right
-  // after the opening <h2> so the fact isn't lost entirely.
   const h2Re = /(<\/h2>)/i;
   if (h2Re.test(html)) return html.replace(h2Re, `$1<p>${sentence}</p>`);
   return html;
 }
 
 // ─── FAQ formatting safety net ────────────────────────────────────────────────
-// The prompt asked for an exact bold+numbered HTML template for the FAQ
-// section (inline-styled, so it renders correctly regardless of theme CSS —
-// see the earlier <dl>/<dt>/<dd> wall-of-text bug). That instruction didn't
-// reliably survive generation either — same unreliable-instruction-following
-// pattern as the deity-name omission. Rather than keep tuning prompt wording
-// against it, this normalizes whatever markup came back (styled or not,
-// <dl>-based or plain paragraphs) and deterministically rebuilds the FAQ
-// section in the guaranteed format.
 function escapeFaqText(str) {
   return (str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -705,10 +745,6 @@ function reformatFaqSection(html) {
   const startIdx = headingMatch.index + headingMatch[0].length;
   const faqBody = html.slice(startIdx); // FAQ is always the last section in every branch's template
 
-  // Convert block-level boundaries to newlines BEFORE stripping the rest of
-  // the tags, so each original paragraph/list-item/definition stays on its
-  // own line — this works whether the source used <dl>/<dt>/<dd>, plain <p>
-  // tags, or the (ignored) styled <div> template.
   const withBreaks = faqBody
     .replace(/<\/(p|dd|dt|li|div)>/gi, "\n")
     .replace(/<br\s*\/?>/gi, "\n");
@@ -719,10 +755,6 @@ function reformatFaqSection(html) {
     .filter(Boolean);
   if (plainLines.length === 0) return html;
 
-  // A line ending in "?" starts a new question; subsequent non-question
-  // lines are appended to that question's answer, matching how the model
-  // actually structures this content (question, then its full answer,
-  // repeated) regardless of whether the markup around it was styled.
   const pairs = [];
   let current = null;
   for (const line of plainLines) {
@@ -750,13 +782,6 @@ function cleanAIOutput(text) {
   return text.replace(/^```(?:html)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
 }
 
-// Pulls the JSON payload (object OR array) out of a raw model response,
-// tolerating any preamble/postamble text the model adds despite "output only
-// JSON" instructions, plus ```json code fences. Guards against a class of
-// failure that's otherwise silent: a truncated or lightly-annotated response
-// makes JSON.parse throw, which an empty catch block previously swallowed
-// with zero trace. Used everywhere a model call expects JSON back: keyword
-// extraction, gap analysis, FAQ generation, SGE analysis, cannibalization.
 function extractJsonValue(text) {
   const stripped = (text || "").replace(/^```json\s*/i, "").replace(/```\s*$/i, "").trim();
   const firstBrace   = stripped.indexOf("{");
@@ -868,7 +893,9 @@ async function runSEOPipeline(product) {
     } catch(e) { console.warn("Gap analysis failed:", e.message); }
   }
 
-  const isHalfMoon = /half.?moon|1\s*mukhi/i.test(product.title);
+  const isMalaProd = isMalaProduct(product.title);
+  const origin = (!isService && !isKarungali) ? resolveOrigin(product.title, isMalaProd) : null;
+  const originBlock = buildOriginBlock(origin);
   const mukhiFacts = (!isService && !isKarungali) ? getMukhiFacts(product.title) : null;
   const mukhiFactsBlock = buildMukhiFactsBlock(mukhiFacts);
   const selfContainedRule = `SELF-CONTAINED SENTENCE RULE (critical for AI/GEO extraction — this determines whether a passage can be lifted into an AI-generated answer): every bullet and every sentence must pass this test — read alone, with no heading and no surrounding text, does it still make complete sense? Concretely: (1) never open a bullet with a bare fragment like "Ruled by Shani (Saturn)…" — give it an explicit subject, e.g. "${product.title} is traditionally associated with Shani (Saturn)…"; (2) never start a bullet with a bare pronoun ("It…", "This…") with no stated antecedent in the same sentence — restate the product name or "this bead"/"this mala" instead; (3) each bullet must read as a complete, standalone claim understandable with zero prior context, not a continuation of the heading above it.`;
@@ -887,6 +914,8 @@ LOCKED DEFINITION (mandatory): On first mention of RKRTL anywhere in the output,
 
 OPENING PARAGRAPH ORDER (mandatory — this is a purchase-intent page, not an encyclopedia entry): (1) lead with the primary traditional use-case or astrological remedy that drives the purchase — never lead with species/botanical identification; (2) state certification per the LOCKED DEFINITION rule above; (3) origin/species/structural detail comes last, framed as evidence supporting the certification claim. BANNED opening pattern: "The [N] Mukhi Rudraksha is a [N]-faced bead from the Elaeocarpus ganitrus tree…" — do not use this or close variants.
 
+ORIGIN RULE (mandatory — read carefully, this varies per product and is provided per-request below, NOT a fixed site-wide default): the VERIFIED ORIGIN block in the user message states the one correct origin claim for THIS specific product. Use that exact origin consistently everywhere origin is mentioned — intro, meta fields, tags, FAQ. Different products on this site legitimately have different origins (Nepal, South India, Haridwar/Uttarakhand, or Indonesia depending on mukhi count, shape, and whether it's a single bead or mala) — never assume Nepal as a universal default, and never introduce an origin not stated in that block.
+
 MEASUREMENT ACCURACY RULE (mandatory): Never state a specific bead size (mm) or weight (grams) as fact anywhere in the output — intro, bullets, or FAQ — unless that exact figure appears in CURRENT DESCRIPTION below. Nothing in this prompt is fed real Shopify variant data, so any size/weight you generate is invented, not accurate, and risks contradicting the actual variant the customer selects. If no size/weight appears in CURRENT DESCRIPTION, omit specific measurements entirely and let the product's variant selector convey size instead.
 
 GMC IDENTITY & BELIEF POLICY RULES (critical — violations cause ad restrictions):
@@ -904,26 +933,26 @@ LENGTH RULE: Each section MAX 4 lines of prose. If a section needs more than 4 l
     ? `Write a concise SEO service description for "${product.title}" offered by RudraKailash.com.\n\nMAIN KEYWORD: ${product.title}\n\nSERVICE CONTEXT:\n- Performed by: MVS Vedapadasala vadhyars, Coimbatore (Ghana Parayana trained)\n- Vadhyars Bhadrinath, Akshai Jayaraman, Harish secured 1st place in VRNT examination by Kanchi Mutt\n- Delivered online — customer books, vadhyars perform, video/photo documentation sent\n- Authentic traditional setting — real padashaala, not studio\n\nSTRUCTURE:\n<h2>${product.title} — Online Vedic Service by MVS Vedapadasala</h2>\n<p>[2–3 sentences: what this service is, who performs it, spiritual purpose]</p>\n<h3>Vedic Significance of ${product.title}</h3>\n[MAX 4 lines: scriptural basis, deity invoked, spiritual purpose]\n<h3>What You Receive — Complete Service Inclusions</h3>\n<ul>[4–5 bullets: performance by trained vadhyars, video/photo documentation, personalised sankalpa, date flexibility, prasad dispatch if applicable]</ul>\n<h3>Performed by MVS Vedapadasala — Authentic Coimbatore Vadhyars</h3>\n[2–3 lines: Ghana Parayana training, Kanchi Mutt VRNT 1st place, real padashaala environment]\n<h3>Who Should Book ${product.title}</h3>\n<ul>[4–5 bullets: ideal devotee profiles — "Those seeking…", "Families facing…"]</ul>\n<h3>How to Book Your ${product.title}</h3>\n<ul>[4 bullets: step-by-step — select date, provide sankalpa details, vadhyars perform, receive documentation]</ul>\n<h3>Frequently Asked Questions About ${product.title}</h3>\n[4 FAQs covering: how the online service works, vadhyar credentials, what is delivered, booking customisation. MANDATORY EXACT HTML TEMPLATE — repeat this block once per question, numbered 1-4; do NOT use <dl>/<dt>/<dd> tags, they render as an undifferentiated wall of text on this theme (no CSS styles them distinctly):\n<div style="margin-bottom:20px"><p style="font-weight:bold;margin:0 0 6px 0">1. [Question]</p><p style="margin:0">[Answer]</p></div>]\n\n${kwPlacementInstructions}\n\nCONTENT GAPS TO COVER: ${gapSummary}\nCURRENT DESCRIPTION (for reference): ${descPlain}\n\nOUTPUT: Clean HTML only, starting with <h2>. Service content only — no bead/certification language.`
     : isKarungali
     ? `Write a concise SEO product description for "${product.title}" on RudraKailash.com.\n\nMAIN KEYWORD: ${product.title}\n\nPRODUCT CONTEXT:\n- Material: Karungali (Ebony) wood — botanical name Diospyros ebenum\n- Origin: Tamil Nadu, South India — deeply rooted in Shaiva Siddhanta tradition\n- Authentication: Visual grain pattern inspection, wood density verification, species identification — NOT X-ray\n- Associated deity: Lord Shani (Saturn) — primary; also used for protection and grounding\n- Traditional use: Japa mala, daily wear, protection against negative energies\n\nSTRUCTURE:\n<h2>${product.title} — Authentic Karungali Ebony Wood from Tamil Nadu</h2>\n<p>[2–3 sentences: keyword in first sentence, material, traditional significance, seeker hook]</p>\n<h3>Significance of Karungali (Ebony) Wood in Shaiva Tradition</h3>\n[MAX 4 lines: Diospyros ebenum botanical name, Shaiva Siddhanta, Shani connection, Tamil Nadu heritage]\n<h3>What Seekers Experience with ${product.title}</h3>\n<ul>[4–5 bullets: "Seekers report…" — grounding, focus, protection, Shani remediation — NO direct claims]</ul>\n<h3>How Karungali Wood is Authenticated at RudraKailash</h3>\n[2–3 lines: species identification by grain pattern and wood density, Diospyros ebenum confirmed, sourced from certified artisans — NO X-ray language, NO RKRTL]\n<h3>Who Should Wear ${product.title}</h3>\n<ul>[4–5 bullets: seeker profiles — Shani Mahadasha, Saturn transit, those seeking grounding, daily japa practitioners]</ul>\n<h3>How to Use Your ${product.title} — Wearing and Care</h3>\n<ul>[4–5 bullets: day to begin wearing (Saturday), mantra (Om Sham Shanicharaya Namah), care — no oil, store dry, avoid water immersion]</ul>\n<h3>Frequently Asked Questions About ${product.title}</h3>\n[4 FAQs covering: what is karungali, Shani benefits, care, authenticity. MANDATORY EXACT HTML TEMPLATE — repeat this block once per question, numbered 1-4; do NOT use <dl>/<dt>/<dd> tags, they render as an undifferentiated wall of text on this theme (no CSS styles them distinctly):\n<div style="margin-bottom:20px"><p style="font-weight:bold;margin:0 0 6px 0">1. [Question]</p><p style="margin:0">[Answer]</p></div>]\n\n${kwPlacementInstructions}\n\nCONTENT GAPS TO COVER: ${gapSummary}\nCURRENT DESCRIPTION (for reference only): ${descPlain}\n\nOUTPUT: Clean HTML only, starting with <h2>. CRITICAL: No RKRTL, no X-ray, no Elaeocarpus ganitrus — this is WOOD not a Rudraksha bead.`
-    : `Write a concise SEO product description for "${product.title}" on RudraKailash.com.\n\nMAIN KEYWORD: ${product.title}\n${isHalfMoon ? `SPECIAL NOTE — 1 Mukhi Half Moon: This is a South Indian Rudraksha (not Nepali). The round 1 Mukhi Nepali bead is virtually non-existent today. The Half Moon form from South India is the authentic, scripturally valid form of 1 Mukhi available. Present this positively — it IS the genuine option.\n` : ""}\n${mukhiFactsBlock}\nSTRUCTURE:\n<h2>${product.title} — Authentic RKRTL-Certified Rudraksha Bead</h2>\n<p>[2–3 sentences, IN THIS ORDER per the OPENING PARAGRAPH ORDER rule above: (1) primary traditional use-case / astrological remedy driving the purchase; (2) certification, first mention written in full per the LOCKED DEFINITION rule; (3) origin/species as supporting evidence]</p>\n<h3>Spiritual Significance of ${product.title} in Vedic Tradition</h3>\n[MAX 4 lines or <ul>: use the VERIFIED MUKHI FACTS above exactly — ruling deity, scripture references, mantra, planet, chakra. The deity name MUST appear at least once here (this is the one section it belongs in). Do not substitute a different deity, planet, or chakra than the one given.]\n<h3>Traditional Benefits Associated with ${product.title}</h3>\n<ul>[4–5 bullets, one per seeker situation. Each bullet: hedge with "seekers report/describe" (required, no direct claims), THEN anchor it in the same sentence to one named specific from the VERIFIED MUKHI FACTS above — the scripture, mantra, planet, or chakra given, not an invented alternative. BANNED: a hedge with no named specific attached, e.g. "seekers report enhanced focus" alone. If a Traditional Use-Case Note is present above, one bullet MUST cover it — this is a primary purchase driver for this product and must not be dropped.]</ul>\n<h3>RKRTL Certification — Verified Authentic ${product.title}</h3>\n[2–3 lines: X-ray imaging + microscopy, Elaeocarpus ganitrus confirmed, certificate issued — do NOT include any verify/certificate links]\n<h3>Who Should Buy ${product.title} — Ideal Seekers</h3>\n<ul>[4–5 bullets: seeker profiles]</ul>\n<h3>How to Wear Your ${product.title} — Day, Mantra and Method</h3>\n<ul>[4–5 bullets: day to begin, thread/metal, mantra (use the VERIFIED MUKHI FACTS mantra), energisation steps]</ul>\n<h3>Frequently Asked Questions About ${product.title}</h3>\n[4 FAQs. MANDATORY EXACT HTML TEMPLATE — repeat this block once per question, numbered 1-4; do NOT use <dl>/<dt>/<dd> tags, they render as an undifferentiated wall of text on this theme (no CSS styles them distinctly):\n<div style="margin-bottom:20px"><p style="font-weight:bold;margin:0 0 6px 0">1. [Question]</p><p style="margin:0">[Answer]</p></div>]\n\n${kwPlacementInstructions}\n\nCONTENT GAPS TO COVER: ${gapSummary}\nCURRENT DESCRIPTION (for reference only): ${descPlain}\n\nOUTPUT: Clean HTML only, starting with <h2>.`;
+    : `Write a concise SEO product description for "${product.title}" on RudraKailash.com.\n\nMAIN KEYWORD: ${product.title}\n${originBlock}\n${mukhiFactsBlock}\nSTRUCTURE:\n<h2>${product.title} — Authentic RKRTL-Certified Rudraksha Bead</h2>\n<p>[2–3 sentences, IN THIS ORDER per the OPENING PARAGRAPH ORDER rule above: (1) primary traditional use-case / astrological remedy driving the purchase; (2) certification, first mention written in full per the LOCKED DEFINITION rule; (3) origin/species as supporting evidence, using the VERIFIED ORIGIN above — not a generic Nepal assumption]</p>\n<h3>Spiritual Significance of ${product.title} in Vedic Tradition</h3>\n[MAX 4 lines or <ul>: use the VERIFIED MUKHI FACTS above exactly — ruling deity, scripture references, mantra, planet, chakra. The deity name MUST appear at least once here (this is the one section it belongs in). Do not substitute a different deity, planet, or chakra than the one given.]\n<h3>Traditional Benefits Associated with ${product.title}</h3>\n<ul>[4–5 bullets, one per seeker situation. Each bullet: hedge with "seekers report/describe" (required, no direct claims), THEN anchor it in the same sentence to one named specific from the VERIFIED MUKHI FACTS above — the scripture, mantra, planet, or chakra given, not an invented alternative. BANNED: a hedge with no named specific attached, e.g. "seekers report enhanced focus" alone. If a Traditional Use-Case Note is present above, one bullet MUST cover it — this is a primary purchase driver for this product and must not be dropped.]</ul>\n<h3>RKRTL Certification — Verified Authentic ${product.title}</h3>\n[2–3 lines: X-ray imaging + microscopy, Elaeocarpus ganitrus confirmed, certificate issued — do NOT include any verify/certificate links]\n<h3>Who Should Buy ${product.title} — Ideal Seekers</h3>\n<ul>[4–5 bullets: seeker profiles]</ul>\n<h3>How to Wear Your ${product.title} — Day, Mantra and Method</h3>\n<ul>[4–5 bullets: day to begin, thread/metal, mantra (use the VERIFIED MUKHI FACTS mantra), energisation steps]</ul>\n<h3>Frequently Asked Questions About ${product.title}</h3>\n[4 FAQs, one of which MUST cover origin using the VERIFIED ORIGIN above exactly — never default to Nepal if the block above states a different origin. MANDATORY EXACT HTML TEMPLATE — repeat this block once per question, numbered 1-4; do NOT use <dl>/<dt>/<dd> tags, they render as an undifferentiated wall of text on this theme (no CSS styles them distinctly):\n<div style="margin-bottom:20px"><p style="font-weight:bold;margin:0 0 6px 0">1. [Question]</p><p style="margin:0">[Answer]</p></div>]\n\n${kwPlacementInstructions}\n\nCONTENT GAPS TO COVER: ${gapSummary}\nCURRENT DESCRIPTION (for reference only): ${descPlain}\n\nOUTPUT: Clean HTML only, starting with <h2>.`;
 
   // ── Meta & Tags prompts — three-way branch ────────────────────────────────
   const metaTitleUser = isService
     ? `Write a meta title for "${product.title}" service on RudraKailash.com. Max 60 chars. Include service keyword + "RudraKailash". Do NOT mention RKRTL or certification.`
     : isKarungali
     ? `Write a meta title for "${product.title}" on RudraKailash.com. Max 60 chars. Include "Karungali" or "Ebony" + "RudraKailash". Do NOT mention RKRTL or X-ray.`
-    : `Write a meta title for "${product.title}" on RudraKailash.com. LOCKED FORMAT — use this exact template for every single-mukhi Rudraksha product, substituting only the mukhi number, with identical wording and identical pipe spacing every time: "{N} Mukhi Rudraksha | Natural Nepali Bead | RKRTL Certified | RudraKailash". Example for 7 Mukhi: "7 Mukhi Rudraksha | Natural Nepali Bead | RKRTL Certified | RudraKailash". Do not deviate from this template, add extra words, or reorder segments. Expected length is approximately 70-73 characters — this is intentional, do not shorten it to fit under 60.`;
+    : `Write a meta title for "${product.title}" on RudraKailash.com. LOCKED FORMAT — use this exact template, substituting only the mukhi/product name and the origin word, with identical wording and identical pipe spacing every time: "{Product Name} | Natural {Origin} Bead | RKRTL Certified | RudraKailash". The {Origin} word MUST be exactly this: "${origin && origin.metaShort ? origin.metaShort : "[no verified origin — omit the origin word and adjust template to \"Natural Bead\" instead]"}" — do not substitute "Nepali" or any other origin word regardless of what seems typical for Rudraksha in general; this product's verified origin is what's stated here. Example for a Nepal-origin product: "7 Mukhi Rudraksha | Natural Nepali Bead | RKRTL Certified | RudraKailash". Do not deviate from this template, add extra words, or reorder segments. Expected length is approximately 70-73 characters — this is intentional, do not shorten it to fit under 60.`;
 
   const metaDescUser = isService
     ? `Write a meta description for "${product.title}" service on RudraKailash.com. 145–155 characters. Mention MVS Vedapadasala vadhyars, authentic Vedic tradition, and include a booking CTA. Do NOT mention RKRTL.`
     : isKarungali
     ? `Write a meta description for "${product.title}" on RudraKailash.com. 145–155 characters. Mention authentic Karungali ebony wood, Tamil Nadu origin, Shani remedy, and include a buy CTA. Do NOT mention RKRTL or X-ray certification.`
-    : `Write a meta description for "${product.title}" on RudraKailash.com. Approximately 145–160 characters. Structure: [mukhi count + Nepali/Indonesian origin, e.g. "Genuine Nepali 7 Mukhi Rudraksha"] + [RKRTL X-ray certified] + [unique benefit in neutral language] + [CTA: Shop/Buy/Order]. NEVER state a specific bead size in mm — natural size ranges vary widely by mukhi count and origin (e.g. Nepali 7 Mukhi typically runs 15-30mm depending on the specimen) and current inventory varies by batch, so any invented mm figure risks being factually wrong. STRICT RULES: NO deity names. NO spiritual benefit claims like "attracts wealth" or "removes negativity". Position as a certified natural bead. Example structure: "Genuine Nepali 5 Mukhi Rudraksha, RKRTL X-ray certified for authenticity. Worn for clarity and calm. Buy authentic — RudraKailash."`;
+    : `Write a meta description for "${product.title}" on RudraKailash.com. Approximately 145–160 characters. Structure: [mukhi count + origin] + [RKRTL X-ray certified] + [unique benefit in neutral language] + [CTA: Shop/Buy/Order]. ${originBlock}Use that exact origin word/phrase in the description — do not substitute "Nepali" if a different origin is verified above. NEVER state a specific bead size in mm — natural size ranges vary widely by mukhi count and origin and current inventory varies by batch, so any invented mm figure risks being factually wrong. STRICT RULES: NO deity names. NO spiritual benefit claims like "attracts wealth" or "removes negativity". Position as a certified natural bead. Example structure (Nepal-origin product): "Genuine Nepali 5 Mukhi Rudraksha, RKRTL X-ray certified for authenticity. Worn for clarity and calm. Buy authentic — RudraKailash."`;
 
   const tagsUser = isService
     ? `Generate 10–12 Shopify product tags for the "${product.title}" service on RudraKailash.com. Current tags: "${product.tags||"none"}". Include: online puja, vedic service, MVS Vedapadasala, homa/puja type, coimbatore vadhyar, authentic vedic ritual, book online.`
     : isKarungali
     ? `Generate 10–12 Shopify product tags for "${product.title}" on RudraKailash.com. Current tags: "${product.tags||"none"}". Include: karungali, ebony mala, karungali mala, diospyros ebenum, shani remedy, saturn remedy, karungali bracelet, authentic ebony, tamil nadu, shaiva tradition, wood mala, protection mala.`
-    : `Generate 10–12 Shopify product tags for "${product.title}". Current tags: "${product.tags||"none"}". Include mukhi number variants, rudraksha, RKRTL, certified, authentic, and relevant spiritual keywords.`;
+    : `Generate 10–12 Shopify product tags for "${product.title}". Current tags: "${product.tags||"none"}". Include mukhi number variants, rudraksha, RKRTL, certified, authentic, and relevant spiritual keywords. ${originBlock}Include an origin-specific tag matching that exact origin (e.g. "south indian rudraksha", "haridwar rudraksha", "indonesian rudraksha", or "nepali rudraksha" — whichever matches the VERIFIED ORIGIN above) — do not default to a Nepal tag if a different origin is verified.`;
 
   const [description, metaTitle, metaDesc, tags] = await Promise.allSettled([
     callClaude(descSystem, descUser, 4000),
