@@ -607,7 +607,12 @@ function resolveOrigin(title, isMala) {
     return null; // uncatalogued single bead — do not assert an origin
   } else {
     if (mukhi !== null && mukhi >= 2 && mukhi <= 10) {
-      return { region: "Indonesia (Java)", sourcingLine: "sourced from Java, Indonesia", metaShort: "Indonesian" };
+      return {
+        region: "Indonesia (Java)",
+        sourcingLine: "sourced from Java, Indonesia",
+        metaShort: "Indonesian",
+        positioning: "Position this mala for its practical, everyday use — well suited to japa (mantra-counting meditation practice) and daily wear. Do NOT compare, contrast, or reference this product against Nepali single beads, Nepali malas, collector-grade pieces, or price differences with any other product on the site — it must stand entirely on its own as a functional daily-practice item, never framed as a lower-cost alternative to anything else (Subbu, July 2026: doing so would cannibalize premium Nepali collector bead sales).",
+      };
     }
     if (mukhi !== null && mukhi >= 11 && mukhi <= 14) {
       return { notStocked: true }; // 11-14 Mukhi malas are not currently stocked
@@ -630,7 +635,11 @@ function buildOriginBlock(origin) {
   if (origin.notStocked) {
     return `ORIGIN WARNING: This mukhi count in mala form is not currently stocked by RudraKailash (per Subbu, July 2026 — very low customer demand, primarily wholesaler-pushed). Do not generate a sourcing claim for this product; flag it for manual review instead.\n`;
   }
-  return `VERIFIED ORIGIN (mandatory): ${origin.sourcingLine}. Whenever origin is mentioned anywhere in the output — opening paragraph, meta title, meta description, tags, or FAQ — it MUST use this exact origin consistently. Do NOT default to Nepal or introduce any other origin not stated here.\n`;
+  let block = `VERIFIED ORIGIN (mandatory): ${origin.sourcingLine}. Whenever origin is mentioned anywhere in the output — opening paragraph, meta title, meta description, tags, or FAQ — it MUST use this exact origin consistently. Do NOT default to Nepal or introduce any other origin not stated here.\n`;
+  if (origin.positioning) {
+    block += `POSITIONING (mandatory): ${origin.positioning}\n`;
+  }
+  return block;
 }
 
 // ─── Canonical Mukhi Facts Table ──────────────────────────────────────────────
