@@ -740,7 +740,7 @@ const ANCHOR_CONTENT_UNIVERSAL = [
   {
     id: "microscopic_verification",
     heading: "Microscopic Verification: Beyond X-Ray",
-    text: `While X-ray reveals a bead's internal ridge structure, microscopic magnification examines fine surface-level detail that X-ray doesn't capture. This includes identifying mukhi lines damaged by insects versus lines that have been deliberately erased or carved to alter the count, and confirming that each mukhi is well-formed and continuous from mouth to tail rather than irregular or broken. Microscopic examination also distinguishes a naturally occurring hole from one that's been artificially made, and reveals the bead's outer surface pattern in detail.`,
+    text: `While X-ray reveals a bead's internal ridge structure, microscopic magnification examines fine surface-level detail that X-ray doesn't capture. This includes identifying mukhi lines damaged by insects versus lines that have been deliberately erased or carved to alter the count, and confirming that each mukhi is well-formed and continuous from mouth to tail rather than irregular or broken. Microscopic examination also distinguishes naturally occurring holes from holes made by bugs or insects, and reveals the bead's outer surface pattern in detail.`,
   },
   {
     id: "insect_and_mold_screening",
