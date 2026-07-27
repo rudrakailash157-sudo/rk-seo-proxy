@@ -893,6 +893,27 @@ function reformatFaqSection(html) {
   return html.slice(0, startIdx) + rebuilt;
 }
 
+// ─── Truncated-response safety net ────────────────────────────────────────────
+// Mirrors server.js exactly. If a generation hits the max_tokens ceiling
+// mid-tag (e.g. cut off right after "<p style" with no closing ">"), that
+// fragment survives every tag-stripping regex downstream (they all require a
+// closing ">") and shows up as literal garbled text in the rendered output —
+// this was the exact cause of a FAQ answer rendering as the raw string
+// "<p style" instead of real content. This trims any such incomplete trailing
+// tag before reformatFaqSection or ensureDeityPresent ever see it, so a
+// truncation degrades gracefully (the incomplete last FAQ/sentence is simply
+// dropped) instead of rendering broken HTML.
+function stripTruncatedTrailingTag(html) {
+  if (!html) return html;
+  const lastOpen  = html.lastIndexOf("<");
+  const lastClose = html.lastIndexOf(">");
+  if (lastOpen > lastClose) {
+    console.warn(`⚠️  Truncated trailing tag detected and stripped (response likely hit max_tokens): "...${html.slice(Math.max(0, lastOpen - 20))}"`);
+    return html.slice(0, lastOpen).trimEnd();
+  }
+  return html;
+}
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("proxyUrl").value = PROXY_URL;
@@ -1247,14 +1268,14 @@ DEPTH RULE (mandatory, applies specifically to "Traditional Benefits" and "Who S
       : `Generate 6 voice-search FAQ pairs for "${selectedProduct.title}" Rudraksha bead on RudraKailash.com.\n\n${originBlock}\n${mukhiFactsBlock}\n${anchorContentBlock}\nRules:\n- Natural spoken language questions\n- Answers 80-150 words, fully self-contained so each one stands alone as a citable passage — no dangling references to "as mentioned above"\n- Include: what it is, who should wear it, how to wear it, RKRTL authentication process, botanical species (per the SPECIES block above), buying advice\n- If VERIFIED ANCHOR FAQ content is supplied above, ALL of those FAQs MUST be included among the 6 pairs (verbatim or lightly reworded, meaning unchanged) — expand beyond 6 pairs if needed to fit every supplied anchor FAQ, rather than omitting any or inventing a substitute\n- If any answer touches origin, it MUST use the exact origin from the VERIFIED ORIGIN block above — do not default to Nepal or invent an alternate origin if a different one is stated there, and never state two different origins across different answers\n- If any answer touches botanical species, it MUST use the exact species from the SPECIES block above — do not default to Elaeocarpus ganitrus if a different species is stated there, and never state two different species across different answers\n- If any answer touches deity, planet, chakra, or mantra, it MUST match the VERIFIED MUKHI FACTS above exactly — do not substitute or invent an alternative\n- Use "seekers report" framing for belief/tradition claims only — VERIFIED ANCHOR CONTENT claims are factual/operational and should stay direct, not hedged\n- If RKRTL is mentioned, expand it on first use exactly as "RKRTL (Kailasha Rudraksha Testing Laboratory)" — never any other expansion\n- Avoid leading with deity names in questions\n- NEVER state a specific bead size in mm or weight in grams in any answer — natural size ranges vary by mukhi count, origin, and current inventory batch, so an invented figure risks being factually wrong\n\nOutput ONLY JSON: [{"q":"Question?","a":"Answer, 80-150 words."},...] 6 items.`;
 
     const [descResult, titleResult, metaDescResult, tagsResult, faqResult] = await Promise.allSettled([
-      aiGenerate(descSystem, descUser, 4000),
+      aiGenerate(descSystem, descUser, 6000),
       aiGenerate(`SEO specialist. Output ONLY the meta title text. No quotes. No explanation.`, titleUser),
       aiGenerate(`SEO specialist. Output ONLY the meta description text. No quotes. No explanation.`, metaDescUser),
       aiGenerate(`Shopify SEO expert. Output ONLY comma-separated tags. No explanation.`, tagsUser),
       aiGenerate(`Voice search SEO expert. Output ONLY valid JSON array. No markdown.`, faqUser, 2200),
     ]);
 
-    const newDesc     = descResult.status     === "fulfilled" ? reformatFaqSection(ensureDeityPresent(cleanHTML(descResult.value), mukhiFacts, selectedProduct.title)) : "<p>Generation failed.</p>";
+    const newDesc     = descResult.status     === "fulfilled" ? reformatFaqSection(ensureDeityPresent(stripTruncatedTrailingTag(cleanHTML(descResult.value)), mukhiFacts, selectedProduct.title)) : "<p>Generation failed.</p>";
     const newTitle    = titleResult.status    === "fulfilled" ? titleResult.value.trim()        : selectedProduct.title;
     const newMetaDesc = metaDescResult.status === "fulfilled" ? metaDescResult.value.trim()     : "";
     const newTags     = tagsResult.status     === "fulfilled" ? tagsResult.value.trim()         : selectedProduct.tags || "";
