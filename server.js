@@ -962,8 +962,8 @@ function buildMukhiFactsBlock(facts) {
 // a real product before relying on stock status in production.
 // ═══════════════════════════════════════════════════════════════════════════
 
-const FALLBACK_BEAD_DIMENSION_RANGE = { min: 20, max: 30, unit: "mm" };
-const FALLBACK_BEAD_WEIGHT_RANGE    = { min: 3,  max: 6,  unit: "g"  };
+const FALLBACK_BEAD_DIMENSION_RANGE = { min: 19, max: 29, unit: "mm" };
+const FALLBACK_BEAD_WEIGHT_RANGE    = { min: 3,  max: 7,  unit: "g"  };
 
 function getBeadDimensionRange(variants) {
   const sizes = [];
@@ -1068,7 +1068,7 @@ function buildPricingAvailabilityTable(product) {
   const hasSilverCapping = variants.some(v => /silver capping/i.test(v.title || ""));
   const packagingItems = isKarungali
     ? [product.title, hasSilverCapping ? "Silver Capping (if selected)" : null, "Protective Packaging"].filter(Boolean)
-    : [product.title, "Physical RKRTL PVC Certificate Card with QR Verification Code", "Saffron Thread", hasSilverCapping ? "Silver Capping (if selected)" : null].filter(Boolean);
+    : [product.title, "Physical RKRTL PVC Certificate Card with QR Verification Code", "Saffron Thread", hasSilverCapping ? "Silver Capping (if selected)" : null, "Free Rudraksha Fruits"].filter(Boolean);
 
   const rows = [
     toSpecRow("Price", priceDisplay),
