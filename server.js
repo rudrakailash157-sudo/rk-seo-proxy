@@ -477,6 +477,98 @@ app.get("/products/:id/quick-specs/preview", async (req, res) => {
   }
 });
 
+// ─── Custom Promotional Blocks — manual seasonal/marketing text ────────────
+// See upsertCustomBlock/removeCustomBlock/listCustomBlocks above for the
+// non-destructive, multi-block mechanism these routes wrap.
+app.post("/products/:id/custom-block", async (req, res) => {
+  if (!storedAccessToken) return res.status(401).json({ error: "Not authenticated" });
+  const { id } = req.params;
+  const { blockId, heading, text } = req.body || {};
+  if (!text || !text.trim()) return res.status(400).json({ error: "text is required" });
+  try {
+    const productRes = await fetch(
+      `https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${id}.json?fields=id,title,body_html`,
+      { headers: { "X-Shopify-Access-Token": storedAccessToken } }
+    );
+    const productData = await productRes.json();
+    if (!productRes.ok || !productData.product) {
+      console.error(`❌ Custom block push (${id}): product fetch failed —`, JSON.stringify(productData).slice(0, 500));
+      return res.status(productRes.status || 404).json({ error: "Product fetch failed", details: productData });
+    }
+    const product = productData.product;
+    const finalBlockId = slugifyBlockId(blockId || heading || text.slice(0, 30));
+    const updatedBodyHtml = upsertCustomBlock(product.body_html, finalBlockId, (heading || "").trim(), text.trim());
+
+    const pushRes = await fetch(
+      `https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${id}.json`,
+      { method: "PUT", headers: { "X-Shopify-Access-Token": storedAccessToken, "Content-Type": "application/json" }, body: JSON.stringify({ product: { id, body_html: updatedBodyHtml } }) }
+    );
+    const pushData = await pushRes.json();
+    if (!pushRes.ok) {
+      console.error(`❌ Custom block push (${id}, "${product.title}"): Shopify PUT failed (status ${pushRes.status}) —`, JSON.stringify(pushData).slice(0, 800));
+      return res.status(pushRes.status).json({ error: "Push failed", details: pushData });
+    }
+    console.log(`✅ Custom block "${finalBlockId}" pushed for "${product.title}" (${id})`);
+    res.json({ success: true, blockId: finalBlockId });
+  } catch (err) {
+    console.error(`❌ Custom block push (${id}) threw an exception:`, err.message);
+    res.status(500).json({ error: "Custom block push failed", message: err.message });
+  }
+});
+
+app.get("/products/:id/custom-block", async (req, res) => {
+  if (!storedAccessToken) return res.status(401).json({ error: "Not authenticated" });
+  const { id } = req.params;
+  try {
+    const productRes = await fetch(
+      `https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${id}.json?fields=id,title,body_html`,
+      { headers: { "X-Shopify-Access-Token": storedAccessToken } }
+    );
+    const productData = await productRes.json();
+    if (!productRes.ok || !productData.product) {
+      console.error(`❌ Custom block list (${id}): product fetch failed —`, JSON.stringify(productData).slice(0, 500));
+      return res.status(productRes.status || 404).json({ error: "Product fetch failed", details: productData });
+    }
+    res.json({ success: true, blocks: listCustomBlocks(productData.product.body_html) });
+  } catch (err) {
+    console.error(`❌ Custom block list (${id}) threw an exception:`, err.message);
+    res.status(500).json({ error: "List failed", message: err.message });
+  }
+});
+
+app.delete("/products/:id/custom-block/:blockId", async (req, res) => {
+  if (!storedAccessToken) return res.status(401).json({ error: "Not authenticated" });
+  const { id, blockId } = req.params;
+  try {
+    const productRes = await fetch(
+      `https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${id}.json?fields=id,title,body_html`,
+      { headers: { "X-Shopify-Access-Token": storedAccessToken } }
+    );
+    const productData = await productRes.json();
+    if (!productRes.ok || !productData.product) {
+      console.error(`❌ Custom block delete (${id}): product fetch failed —`, JSON.stringify(productData).slice(0, 500));
+      return res.status(productRes.status || 404).json({ error: "Product fetch failed", details: productData });
+    }
+    const product = productData.product;
+    const updatedBodyHtml = removeCustomBlock(product.body_html, blockId);
+
+    const pushRes = await fetch(
+      `https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${id}.json`,
+      { method: "PUT", headers: { "X-Shopify-Access-Token": storedAccessToken, "Content-Type": "application/json" }, body: JSON.stringify({ product: { id, body_html: updatedBodyHtml } }) }
+    );
+    const pushData = await pushRes.json();
+    if (!pushRes.ok) {
+      console.error(`❌ Custom block delete (${id}, "${product.title}"): Shopify PUT failed (status ${pushRes.status}) —`, JSON.stringify(pushData).slice(0, 800));
+      return res.status(pushRes.status).json({ error: "Delete failed", details: pushData });
+    }
+    console.log(`✅ Custom block "${blockId}" removed from "${product.title}" (${id})`);
+    res.json({ success: true });
+  } catch (err) {
+    console.error(`❌ Custom block delete (${id}) threw an exception:`, err.message);
+    res.status(500).json({ error: "Delete failed", message: err.message });
+  }
+});
+
 app.post("/ai/generate", async (req, res) => {
   const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
   if (!ANTHROPIC_KEY) return res.status(500).json({ error: "ANTHROPIC_API_KEY not configured" });
@@ -1002,7 +1094,7 @@ function buildMukhiFactsBlock(facts) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 const FALLBACK_BEAD_DIMENSION_RANGE = { min: 19, max: 29, unit: "mm" };
-const FALLBACK_BEAD_WEIGHT_RANGE    = { min: 3,  max: 7,  unit: "g"  };
+const FALLBACK_BEAD_WEIGHT_RANGE    = { min: 3,  max: 6,  unit: "g"  };
 
 function getBeadDimensionRange(variants) {
   const sizes = [];
@@ -1013,16 +1105,29 @@ function getBeadDimensionRange(variants) {
   if (!sizes.length) return null;
   const min = Math.min(...sizes), max = Math.max(...sizes);
   const fmt = n => (Number.isInteger(n) ? String(n) : n.toFixed(1));
-  return min === max ? `${fmt(min)}mm` : `${fmt(min)}mm – ${fmt(max)}mm`;
+  return min === max ? `Approx. ${fmt(min)}mm` : `Approx. ${fmt(min)}mm – ${fmt(max)}mm`;
 }
 
+// NOTE (Aug 2026): if a product has more than one size variant but every
+// variant reports the exact same weight, that's almost always a sign the
+// weight field was never set per-variant in Shopify (a real spread of bead
+// sizes should have a real spread of weights) — not an actual fact worth
+// showing as if it were precise. In that case this returns null so the
+// caller falls back to the approximate store-wide range instead of
+// displaying a flat number that looks exact but likely isn't. A single-
+// variant product reporting one weight is legitimate and is shown as-is.
 function getBeadWeightRange(variants) {
-  const weights = (variants || [])
+  const list = variants || [];
+  const weights = list
     .map(v => parseFloat(v.weight))
-    .filter(w => !isNaN(w) && w > 0 && (variants.find(x => parseFloat(x.weight) === w)?.weight_unit || "g") === "g");
+    .filter(w => !isNaN(w) && w > 0 && (list.find(x => parseFloat(x.weight) === w)?.weight_unit || "g") === "g");
   if (!weights.length) return null;
+
+  const distinct = [...new Set(weights)];
+  if (list.length > 1 && distinct.length === 1) return null;
+
   const min = Math.min(...weights), max = Math.max(...weights);
-  return min === max ? `${min}g` : `${min}g – ${max}g`;
+  return min === max ? `Approx. ${min}g` : `Approx. ${min}g – ${max}g`;
 }
 
 function toSpecRow(label, value) { return value ? [label, value] : null; }
@@ -1049,9 +1154,9 @@ ${rowsHtml}
 function buildQuickSpecsTable(product) {
   const isKarungali = isKarungaliProduct(product);
   const dimensionRange = getBeadDimensionRange(product.variants) ||
-    `${FALLBACK_BEAD_DIMENSION_RANGE.min}mm – ${FALLBACK_BEAD_DIMENSION_RANGE.max}mm`;
+    `Approx. ${FALLBACK_BEAD_DIMENSION_RANGE.min}mm – ${FALLBACK_BEAD_DIMENSION_RANGE.max}mm`;
   const weightRange = getBeadWeightRange(product.variants) ||
-    `${FALLBACK_BEAD_WEIGHT_RANGE.min}g – ${FALLBACK_BEAD_WEIGHT_RANGE.max}g`;
+    `Approx. ${FALLBACK_BEAD_WEIGHT_RANGE.min}g – ${FALLBACK_BEAD_WEIGHT_RANGE.max}g`;
 
   let rows;
   if (isKarungali) {
@@ -1149,6 +1254,130 @@ function upsertGeneratedBlocks(currentBodyHtml, quickSpecsHtml, pricingHtml) {
     return html.slice(0, insertAt) + "\n" + block + html.slice(insertAt);
   }
   return block + "\n" + html;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── Custom Promotional Blocks — manually authored, seasonal/one-off text ──
+// Distinct from Quick Specs (deterministic, auto-generated, always one
+// block): this is free-form text Subbu writes himself — e.g. a Raksha
+// Bandhan gifting pitch — inserted non-destructively right before the FAQ
+// section. Each block carries its own short label (e.g.
+// "raksha-bandhan-2026"), so several can coexist independently: pushing a
+// new label adds alongside existing blocks, pushing an existing label
+// replaces just that one in place, and deleting a label removes only that
+// block — everything else on the page (Quick Specs, other custom blocks,
+// the rest of the description) is untouched.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const RK_CUSTOM_BLOCKS_CONTAINER_START = "<!-- RK-CUSTOM-BLOCKS:START -->";
+const RK_CUSTOM_BLOCKS_CONTAINER_END   = "<!-- RK-CUSTOM-BLOCKS:END -->";
+
+function slugifyBlockId(raw) {
+  return (raw || "")
+    .toLowerCase().trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60) || `block-${Date.now()}`;
+}
+
+function customBlockMarkers(blockId) {
+  return {
+    start: `<!-- RK-CUSTOM-BLOCK:${blockId}:START -->`,
+    end:   `<!-- RK-CUSTOM-BLOCK:${blockId}:END -->`,
+  };
+}
+
+function renderCustomBlockHtml(blockId, heading, text) {
+  const { start, end } = customBlockMarkers(blockId);
+  const paragraphs = (text || "")
+    .split(/\n\s*\n/)
+    .map(p => p.trim())
+    .filter(Boolean)
+    .map(p => `    <p>${p.replace(/\n/g, "<br>")}</p>`)
+    .join("\n");
+  const headingHtml = heading ? `    <h3>${heading}</h3>\n` : "";
+  return `${start}\n  <div class="rk-custom-block">\n${headingHtml}${paragraphs}\n  </div>\n${end}`;
+}
+
+// Inserts a new labelled block, or — if a block with this exact label
+// already exists anywhere on the page — replaces just that one in place.
+// New blocks join any existing ones inside a shared container, which lives
+// right before the FAQ heading (or at the very end of the page if there's
+// no FAQ section to anchor to yet).
+function upsertCustomBlock(currentBodyHtml, blockId, heading, text) {
+  const html = currentBodyHtml || "";
+  const newBlockHtml = renderCustomBlockHtml(blockId, heading, text);
+  const { start: blockStart, end: blockEnd } = customBlockMarkers(blockId);
+
+  const containerStartIdx = html.indexOf(RK_CUSTOM_BLOCKS_CONTAINER_START);
+  const containerEndIdx   = html.indexOf(RK_CUSTOM_BLOCKS_CONTAINER_END);
+
+  if (containerStartIdx !== -1 && containerEndIdx !== -1 && containerEndIdx > containerStartIdx) {
+    const containerInner = html.slice(containerStartIdx + RK_CUSTOM_BLOCKS_CONTAINER_START.length, containerEndIdx);
+    const existingStartIdx = containerInner.indexOf(blockStart);
+    const existingEndIdx   = containerInner.indexOf(blockEnd);
+
+    let updatedInner;
+    if (existingStartIdx !== -1 && existingEndIdx !== -1) {
+      updatedInner = containerInner.slice(0, existingStartIdx) + newBlockHtml + containerInner.slice(existingEndIdx + blockEnd.length);
+    } else {
+      updatedInner = containerInner.trimEnd() + "\n" + newBlockHtml + "\n";
+    }
+    return html.slice(0, containerStartIdx)
+      + RK_CUSTOM_BLOCKS_CONTAINER_START + "\n" + updatedInner.trim() + "\n" + RK_CUSTOM_BLOCKS_CONTAINER_END
+      + html.slice(containerEndIdx + RK_CUSTOM_BLOCKS_CONTAINER_END.length);
+  }
+
+  const container = `${RK_CUSTOM_BLOCKS_CONTAINER_START}\n${newBlockHtml}\n${RK_CUSTOM_BLOCKS_CONTAINER_END}`;
+  const faqHeadingMatch = html.match(/<h3>\s*Frequently Asked Questions[^<]*<\/h3>/i);
+  if (faqHeadingMatch) {
+    return html.slice(0, faqHeadingMatch.index) + container + "\n" + html.slice(faqHeadingMatch.index);
+  }
+  return html.trimEnd() + "\n" + container;
+}
+
+// Removes one labelled block by ID. If it was the last block left inside
+// the shared container, cleans up the now-empty container markers too
+// rather than leaving stray HTML comments behind.
+function removeCustomBlock(currentBodyHtml, blockId) {
+  const html = currentBodyHtml || "";
+  const { start: blockStart, end: blockEnd } = customBlockMarkers(blockId);
+  const blockStartIdx = html.indexOf(blockStart);
+  const blockEndIdx   = html.indexOf(blockEnd);
+  if (blockStartIdx === -1 || blockEndIdx === -1) return html;
+
+  let updated = html.slice(0, blockStartIdx) + html.slice(blockEndIdx + blockEnd.length);
+
+  const containerStartIdx = updated.indexOf(RK_CUSTOM_BLOCKS_CONTAINER_START);
+  const containerEndIdx   = updated.indexOf(RK_CUSTOM_BLOCKS_CONTAINER_END);
+  if (containerStartIdx !== -1 && containerEndIdx !== -1) {
+    const inner = updated.slice(containerStartIdx + RK_CUSTOM_BLOCKS_CONTAINER_START.length, containerEndIdx).trim();
+    if (!inner) {
+      updated = updated.slice(0, containerStartIdx) + updated.slice(containerEndIdx + RK_CUSTOM_BLOCKS_CONTAINER_END.length);
+    }
+  }
+  return updated;
+}
+
+// Lists currently-live custom blocks on a product, so the UI can show
+// what's active right now without Subbu needing to remember exact labels.
+function listCustomBlocks(bodyHtml) {
+  const html = bodyHtml || "";
+  const blocks = [];
+  const re = /<!-- RK-CUSTOM-BLOCK:(.+?):START -->([\s\S]*?)<!-- RK-CUSTOM-BLOCK:\1:END -->/g;
+  let match;
+  while ((match = re.exec(html)) !== null) {
+    const inner = match[2];
+    const headingMatch = inner.match(/<h3>(.*?)<\/h3>/i);
+    const firstParaMatch = inner.match(/<p>(.*?)<\/p>/i);
+    const previewSource = firstParaMatch ? firstParaMatch[1] : inner.replace(/<[^>]+>/g, " ");
+    blocks.push({
+      id: match[1],
+      heading: headingMatch ? headingMatch[1] : null,
+      preview: previewSource.replace(/\s+/g, " ").trim().slice(0, 140),
+    });
+  }
+  return blocks;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
