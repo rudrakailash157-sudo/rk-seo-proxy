@@ -6,6 +6,9 @@ const fs         = require("fs");
 const path       = require("path");
 const cron       = require("node-cron");
 const nodemailer = require("nodemailer");
+let mysql = null;
+try { mysql = require("mysql2/promise"); }
+catch (e) { console.warn("⚠️  mysql2 not installed — run `npm install mysql2` to enable MySQL rank-tracker storage. Falling back to local JSON files."); }
 
 let auditModule = null;
 try {
@@ -62,6 +65,172 @@ function saveKeywords(data) {
   try { fs.writeFileSync(KEYWORDS_FILE, JSON.stringify(data, null, 2), "utf8"); }
   catch (e) { console.warn("⚠️  Keywords save error:", e.message); }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── Rank Tracker Storage — MySQL (Hostinger) with local-JSON fallback ──────
+// Render's filesystem is not guaranteed persistent across redeploys/restarts
+// on most plans, so the original .rank_data.json / .keywords.json files are
+// at risk of being wiped. This moves rank-tracker storage to the existing
+// Hostinger MySQL DB (the one already used for RKRTL certificates) when
+// configured, and transparently falls back to the original JSON-file
+// functions above if the DB env vars aren't set, the connection fails, or
+// mysql2 isn't installed — so nothing breaks if the DB isn't reachable yet.
+//
+// REQUIRED before this actually uses MySQL:
+//   1. `npm install mysql2` (added to package.json)
+//   2. Render env vars: HOSTINGER_DB_HOST, HOSTINGER_DB_USER,
+//      HOSTINGER_DB_PASSWORD, HOSTINGER_DB_NAME
+//   3. Hostinger hPanel → Remote MySQL → allow the IP(s) Render connects
+//      from. Shared hosting blocks external MySQL connections by default —
+//      this is the most common reason the pool will fail to connect even
+//      with correct credentials. Render's outbound IP can change on some
+//      plans, so a static-IP add-on or an SSH/proxy tunnel may be needed if
+//      wildcard remote access isn't available on the Hostinger plan.
+// Until all three are true, rank tracking keeps working exactly as before,
+// on local JSON — this code degrades safely rather than breaking anything.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const DB_HOST     = process.env.HOSTINGER_DB_HOST     || "";
+const DB_USER     = process.env.HOSTINGER_DB_USER     || "";
+const DB_PASSWORD = process.env.HOSTINGER_DB_PASSWORD || "";
+const DB_NAME     = process.env.HOSTINGER_DB_NAME     || "";
+const DB_CONFIGURED = !!(mysql && DB_HOST && DB_USER && DB_NAME);
+
+let dbPool = null;
+if (DB_CONFIGURED) {
+  dbPool = mysql.createPool({
+    host: DB_HOST, user: DB_USER, password: DB_PASSWORD, database: DB_NAME,
+    waitForConnections: true, connectionLimit: 5, queueLimit: 0, connectTimeout: 8000,
+  });
+  console.log(`🗄️  MySQL rank-tracker pool configured for ${DB_HOST}/${DB_NAME}`);
+} else {
+  console.warn("⚠️  MySQL env vars not set (HOSTINGER_DB_HOST/USER/PASSWORD/NAME) — rank tracker using local JSON files");
+}
+
+let dbSchemaReady = false;
+// Returns true if MySQL is configured AND reachable AND schema is ready — every
+// DB-backed function below checks this first and falls back to the JSON file
+// functions above if it's false, so a DB outage never takes down rank tracking.
+async function ensureRankSchema() {
+  if (!dbPool) return false;
+  if (dbSchemaReady) return true;
+  try {
+    await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS rk_rank_keywords (
+        product_id     VARCHAR(64)  NOT NULL PRIMARY KEY,
+        product_title  VARCHAR(500) NOT NULL,
+        keyword        VARCHAR(500) NOT NULL,
+        is_custom      TINYINT(1)   NOT NULL DEFAULT 0,
+        added_at       DATETIME     NOT NULL
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS rk_rank_history (
+        id           INT AUTO_INCREMENT PRIMARY KEY,
+        product_id   VARCHAR(64) NOT NULL,
+        check_date   DATE        NOT NULL,
+        pos_in       INT         NULL,
+        pos_global   INT         NULL,
+        checked_at   DATETIME    NOT NULL,
+        UNIQUE KEY uniq_product_date (product_id, check_date),
+        INDEX idx_product (product_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    dbSchemaReady = true;
+    console.log("🗄️  MySQL rank-tracker schema ready (rk_rank_keywords, rk_rank_history)");
+    return true;
+  } catch (e) {
+    console.error("❌ MySQL schema init failed — rank tracker falling back to local JSON files for this session:", e.message);
+    return false;
+  }
+}
+
+async function loadKeywordsAsync() {
+  if (await ensureRankSchema()) {
+    try {
+      const [rows] = await dbPool.query("SELECT * FROM rk_rank_keywords");
+      const out = {};
+      for (const r of rows) {
+        out[r.product_id] = { productId: r.product_id, productTitle: r.product_title, keyword: r.keyword, isCustom: !!r.is_custom, addedAt: r.added_at };
+      }
+      return out;
+    } catch (e) { console.error("❌ MySQL loadKeywords failed, falling back to JSON file:", e.message); }
+  }
+  return loadKeywords();
+}
+
+async function saveKeywordEntryAsync(entry) {
+  if (await ensureRankSchema()) {
+    try {
+      await dbPool.query(
+        `INSERT INTO rk_rank_keywords (product_id, product_title, keyword, is_custom, added_at)
+         VALUES (?,?,?,?,?)
+         ON DUPLICATE KEY UPDATE product_title=VALUES(product_title), keyword=VALUES(keyword), is_custom=VALUES(is_custom)`,
+        [String(entry.productId), entry.productTitle, entry.keyword, entry.isCustom ? 1 : 0, new Date(entry.addedAt || Date.now())]
+      );
+      return true;
+    } catch (e) { console.error("❌ MySQL saveKeyword failed, falling back to JSON file:", e.message); }
+  }
+  const keywords = loadKeywords();
+  keywords[entry.productId] = entry;
+  saveKeywords(keywords);
+  return false;
+}
+
+async function deleteKeywordAsync(productId) {
+  if (await ensureRankSchema()) {
+    try { await dbPool.query("DELETE FROM rk_rank_keywords WHERE product_id=?", [String(productId)]); return true; }
+    catch (e) { console.error("❌ MySQL deleteKeyword failed, falling back to JSON file:", e.message); }
+  }
+  const keywords = loadKeywords();
+  delete keywords[productId];
+  saveKeywords(keywords);
+  return false;
+}
+
+async function loadRankDataAsync() {
+  if (await ensureRankSchema()) {
+    try {
+      const [kwRows]   = await dbPool.query("SELECT * FROM rk_rank_keywords");
+      const [histRows] = await dbPool.query("SELECT * FROM rk_rank_history ORDER BY check_date ASC");
+      const out = {};
+      for (const k of kwRows) out[k.product_id] = { productId: k.product_id, productTitle: k.product_title, keyword: k.keyword, history: [] };
+      for (const h of histRows) {
+        if (!out[h.product_id]) out[h.product_id] = { productId: h.product_id, productTitle: "", keyword: "", history: [] };
+        const dateStr = h.check_date instanceof Date ? h.check_date.toISOString().split("T")[0] : String(h.check_date);
+        out[h.product_id].history.push({ date: dateStr, posIN: h.pos_in, posGlobal: h.pos_global, checkedAt: h.checked_at });
+      }
+      for (const id of Object.keys(out)) {
+        const hist = out[id].history;
+        const latest = hist[hist.length - 1];
+        out[id].lastChecked  = latest ? latest.checkedAt : null;
+        out[id].latestIN     = latest ? latest.posIN     : null;
+        out[id].latestGlobal = latest ? latest.posGlobal : null;
+      }
+      return out;
+    } catch (e) { console.error("❌ MySQL loadRankData failed, falling back to JSON file:", e.message); }
+  }
+  return loadRankData();
+}
+
+// Returns true if the check was written to MySQL, false if the caller should
+// fall back to the JSON-file write path (mirrors the original inline logic
+// in checkAndStoreRank below).
+async function saveRankCheckAsync(productId, today, posIN, posGlobal) {
+  if (await ensureRankSchema()) {
+    try {
+      await dbPool.query(
+        `INSERT INTO rk_rank_history (product_id, check_date, pos_in, pos_global, checked_at)
+         VALUES (?,?,?,?,NOW())
+         ON DUPLICATE KEY UPDATE pos_in=VALUES(pos_in), pos_global=VALUES(pos_global), checked_at=NOW()`,
+        [String(productId), today, posIN, posGlobal]
+      );
+      return true;
+    } catch (e) { console.error("❌ MySQL saveRankCheck failed, falling back to JSON file:", e.message); }
+  }
+  return false;
+}
+// ═══════════════════════════════════════════════════════════════════════════
 
 function loadCitationQueries() {
   try {
@@ -227,6 +396,68 @@ app.put("/products/:id", async (req, res) => {
   } catch (err) { res.status(500).json({ error: "Failed to update product", message: err.message }); }
 });
 
+// ─── Non-destructive Quick Specs + Pricing/Availability push ───────────────
+// Unlike PUT /products/:id (used by the full RSA v8 pipeline, which replaces
+// body_html entirely with newly AI-generated content), this route does NOT
+// call Haiku at all. It fetches the product's CURRENT live body_html fresh
+// from Shopify, builds the two deterministic tables from real variant data,
+// upserts them into a marked block (see upsertGeneratedBlocks above), and
+// pushes back only that modified body_html — every existing word on the page
+// (hand-written, AI-written, whatever's there) is left exactly as-is.
+// Safe to re-run any time price/stock changes — it replaces its own marked
+// block only, never duplicates it.
+app.post("/products/:id/quick-specs", async (req, res) => {
+  if (!storedAccessToken) return res.status(401).json({ error: "Not authenticated" });
+  const { id } = req.params;
+  try {
+    const productRes = await fetch(
+      `https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${id}.json?fields=id,title,body_html,tags,handle,status,variants`,
+      { headers: { "X-Shopify-Access-Token": storedAccessToken } }
+    );
+    const productData = await productRes.json();
+    if (!productRes.ok || !productData.product) return res.status(productRes.status || 404).json({ error: "Product fetch failed", details: productData });
+    const product = productData.product;
+
+    const isService = isServiceProduct(product);
+    if (isService) return res.status(400).json({ error: "Quick Specs tables are for physical products, not services — this product was detected as a Puja/Homa service." });
+
+    const quickSpecsHtml = buildQuickSpecsTable(product);
+    const pricingHtml    = buildPricingAvailabilityTable(product);
+    const updatedBodyHtml = upsertGeneratedBlocks(product.body_html, quickSpecsHtml, pricingHtml);
+
+    const pushRes = await fetch(
+      `https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${id}.json`,
+      { method: "PUT", headers: { "X-Shopify-Access-Token": storedAccessToken, "Content-Type": "application/json" }, body: JSON.stringify({ product: { id, body_html: updatedBodyHtml } }) }
+    );
+    const pushData = await pushRes.json();
+    if (!pushRes.ok) return res.status(pushRes.status).json({ error: "Push failed", details: pushData });
+
+    res.json({ success: true, quickSpecsHtml, pricingHtml, bodyHtmlPreview: updatedBodyHtml });
+  } catch (err) { res.status(500).json({ error: "Quick Specs push failed", message: err.message }); }
+});
+
+// Preview-only variant — builds the tables without pushing, so the UI can
+// show what would be inserted before committing.
+app.get("/products/:id/quick-specs/preview", async (req, res) => {
+  if (!storedAccessToken) return res.status(401).json({ error: "Not authenticated" });
+  const { id } = req.params;
+  try {
+    const productRes = await fetch(
+      `https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${id}.json?fields=id,title,body_html,tags,handle,status,variants`,
+      { headers: { "X-Shopify-Access-Token": storedAccessToken } }
+    );
+    const productData = await productRes.json();
+    if (!productRes.ok || !productData.product) return res.status(productRes.status || 404).json({ error: "Product fetch failed", details: productData });
+    const product = productData.product;
+    res.json({
+      success: true,
+      quickSpecsHtml: buildQuickSpecsTable(product),
+      pricingHtml: buildPricingAvailabilityTable(product),
+      hasExistingBlock: (product.body_html || "").includes(RK_BLOCK_START),
+    });
+  } catch (err) { res.status(500).json({ error: "Preview failed", message: err.message }); }
+});
+
 app.post("/ai/generate", async (req, res) => {
   const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
   if (!ANTHROPIC_KEY) return res.status(500).json({ error: "ANTHROPIC_API_KEY not configured" });
@@ -337,28 +568,25 @@ async function checkRankPosition(keyword, gl = "in") {
   } catch (e) { console.warn(`Rank check failed for "${keyword}" (${gl}):`, e.message); return null; }
 }
 
-app.get("/rank/keywords", (req, res) => { res.json({ success: true, keywords: loadKeywords() }); });
+app.get("/rank/keywords", async (req, res) => { res.json({ success: true, keywords: await loadKeywordsAsync(), storage: DB_CONFIGURED ? "mysql" : "json" }); });
 
-app.post("/rank/keywords", (req, res) => {
+app.post("/rank/keywords", async (req, res) => {
   const { productId, productTitle, keyword } = req.body;
   if (!productId || !productTitle) return res.status(400).json({ error: "productId and productTitle required" });
-  const keywords = loadKeywords();
-  keywords[productId] = { productId, productTitle, keyword: keyword || autoKeyword(productTitle), isCustom: !!keyword, addedAt: new Date().toISOString() };
-  saveKeywords(keywords);
-  res.json({ success: true, entry: keywords[productId] });
+  const entry = { productId, productTitle, keyword: keyword || autoKeyword(productTitle), isCustom: !!keyword, addedAt: new Date().toISOString() };
+  await saveKeywordEntryAsync(entry);
+  res.json({ success: true, entry });
 });
 
-app.delete("/rank/keywords/:productId", (req, res) => {
-  const keywords = loadKeywords();
-  delete keywords[req.params.productId];
-  saveKeywords(keywords);
+app.delete("/rank/keywords/:productId", async (req, res) => {
+  await deleteKeywordAsync(req.params.productId);
   res.json({ success: true });
 });
 
-app.get("/rank/data", (req, res) => { res.json({ success: true, rankData: loadRankData(), keywords: loadKeywords() }); });
+app.get("/rank/data", async (req, res) => { res.json({ success: true, rankData: await loadRankDataAsync(), keywords: await loadKeywordsAsync(), storage: DB_CONFIGURED ? "mysql" : "json" }); });
 
 app.post("/rank/check/:productId", async (req, res) => {
-  const keywords = loadKeywords();
+  const keywords = await loadKeywordsAsync();
   const entry    = keywords[req.params.productId];
   if (!entry) return res.status(404).json({ error: "Product not tracked. Add keyword first." });
   res.json({ message: "Rank check started — results in ~30 seconds.", keyword: entry.keyword });
@@ -369,23 +597,27 @@ async function checkAndStoreRank(entry) {
   const { productId, productTitle, keyword } = entry;
   console.log(`📊 Checking rank: "${keyword}"`);
   const [posIN, posGlobal] = await Promise.all([checkRankPosition(keyword, "in"), checkRankPosition(keyword, "us")]);
-  const today    = new Date().toISOString().split("T")[0];
-  const rankData = loadRankData();
-  if (!rankData[productId]) rankData[productId] = { productId, productTitle, keyword, history: [] };
-  rankData[productId].history = rankData[productId].history.filter(h => h.date !== today);
-  rankData[productId].history.push({ date: today, posIN, posGlobal, checkedAt: new Date().toISOString() });
-  rankData[productId].history = rankData[productId].history.sort((a, b) => a.date.localeCompare(b.date)).slice(-90);
-  rankData[productId].lastChecked  = new Date().toISOString();
-  rankData[productId].latestIN     = posIN;
-  rankData[productId].latestGlobal = posGlobal;
-  saveRankData(rankData);
-  console.log(`✅ Rank stored: "${keyword}" — IN: ${posIN || "Not found"}, Global: ${posGlobal || "Not found"}`);
+  const today = new Date().toISOString().split("T")[0];
+
+  const wroteToDb = await saveRankCheckAsync(productId, today, posIN, posGlobal);
+  if (!wroteToDb) {
+    const rankData = loadRankData();
+    if (!rankData[productId]) rankData[productId] = { productId, productTitle, keyword, history: [] };
+    rankData[productId].history = rankData[productId].history.filter(h => h.date !== today);
+    rankData[productId].history.push({ date: today, posIN, posGlobal, checkedAt: new Date().toISOString() });
+    rankData[productId].history = rankData[productId].history.sort((a, b) => a.date.localeCompare(b.date)).slice(-90);
+    rankData[productId].lastChecked  = new Date().toISOString();
+    rankData[productId].latestIN     = posIN;
+    rankData[productId].latestGlobal = posGlobal;
+    saveRankData(rankData);
+  }
+  console.log(`✅ Rank stored (${wroteToDb ? "MySQL" : "JSON file"}): "${keyword}" — IN: ${posIN || "Not found"}, Global: ${posGlobal || "Not found"}`);
   return { posIN, posGlobal };
 }
 
 cron.schedule("30 0 * * *", async () => {
   console.log("📊 Daily rank check — 6am IST");
-  const keywords = loadKeywords();
+  const keywords = await loadKeywordsAsync();
   const entries  = Object.values(keywords);
   if (entries.length === 0) { console.log("📊 No products tracked yet."); return; }
   for (const entry of entries) { await checkAndStoreRank(entry); await new Promise(r => setTimeout(r, 2000)); }
@@ -394,7 +626,7 @@ cron.schedule("30 0 * * *", async () => {
 
 cron.schedule("30 1 * * 1", async () => {
   console.log("📊 Weekly rank report — Monday 7am IST");
-  const rankData = loadRankData();
+  const rankData = await loadRankDataAsync();
   const entries  = Object.values(rankData);
   if (entries.length === 0) return;
   const rows = entries.map(entry => {
@@ -703,6 +935,184 @@ function buildMukhiFactsBlock(facts) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ─── Quick Specs + Pricing/Availability tables — GEO structured-data blocks ─
+// Deterministic (never Haiku-generated) — sourced from MUKHI_FACTS,
+// resolveOrigin(), isKarungaliProduct(), and live Shopify variant data, so
+// nothing here is an LLM guess. Added Aug 2026 per Subbu's request to give
+// AI answer engines (Perplexity, Gemini Shopping) an explicit fact box
+// instead of having to parse prose, plus a live price/stock block, since
+// those engines won't cite a product they can't confirm is in stock.
+//
+// IMPORTANT — Shopify field requirement: buildPricingAvailabilityTable reads
+// product.variants (price, inventory_quantity, weight, title). The product
+// fetches elsewhere in this file request a restricted `fields=` list that
+// does NOT include variants by default — the /products/:id/quick-specs route
+// below fetches with variants explicitly included. If you reuse these
+// functions elsewhere, make sure the product object you pass in was fetched
+// with `fields=...,variants` (or from a Shopify webhook payload, which
+// includes variants by default).
+//
+// KNOWN RISK — inventory_quantity: the app's current OAuth scope is
+// `read_products,write_products,read_product_listings`. Shopify variants
+// still generally return `inventory_quantity` under `read_products` for a
+// single-location shop, but if you see it come back null/undefined for every
+// variant, the fix is adding `read_inventory` to the OAuth scope in
+// app.get("/auth/install") below and re-authenticating the store — this
+// wasn't testable without live store credentials, so verify it once against
+// a real product before relying on stock status in production.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const FALLBACK_BEAD_DIMENSION_RANGE = { min: 20, max: 30, unit: "mm" };
+const FALLBACK_BEAD_WEIGHT_RANGE    = { min: 3,  max: 6,  unit: "g"  };
+
+function getBeadDimensionRange(variants) {
+  const sizes = [];
+  for (const v of variants || []) {
+    const match = (v.title || v.option1 || "").match(/(\d+(\.\d+)?)\s*mm/i);
+    if (match) sizes.push(parseFloat(match[1]));
+  }
+  if (!sizes.length) return null;
+  const min = Math.min(...sizes), max = Math.max(...sizes);
+  const fmt = n => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+  return min === max ? `${fmt(min)}mm` : `${fmt(min)}mm – ${fmt(max)}mm`;
+}
+
+function getBeadWeightRange(variants) {
+  const weights = (variants || [])
+    .map(v => parseFloat(v.weight))
+    .filter(w => !isNaN(w) && w > 0 && (variants.find(x => parseFloat(x.weight) === w)?.weight_unit || "g") === "g");
+  if (!weights.length) return null;
+  const min = Math.min(...weights), max = Math.max(...weights);
+  return min === max ? `${min}g` : `${min}g – ${max}g`;
+}
+
+function toSpecRow(label, value) { return value ? [label, value] : null; }
+
+function renderSpecTable(title, containerClass, rows) {
+  const rowsHtml = rows.filter(Boolean)
+    .map(([label, value]) => `      <tr><td><strong>${label}</strong></td><td>${value}</td></tr>`)
+    .join("\n");
+  if (!rowsHtml) return "";
+  return `<div class="rk-quick-specs-block ${containerClass}">
+  <h3>${title}</h3>
+  <table class="rk-specs-table">
+    <tbody>
+${rowsHtml}
+    </tbody>
+  </table>
+</div>`;
+}
+
+// Builds the "Quick Specifications" fact box. product must include `variants`
+// (see field-requirement note above). Karungali rows deliberately omit
+// Ruling Planet/Deity/Chakra — no verified Karungali Jyotish anchor content
+// exists yet (per Subbu, July 2026), so this doesn't guess.
+function buildQuickSpecsTable(product) {
+  const isKarungali = isKarungaliProduct(product);
+  const dimensionRange = getBeadDimensionRange(product.variants) ||
+    `${FALLBACK_BEAD_DIMENSION_RANGE.min}mm – ${FALLBACK_BEAD_DIMENSION_RANGE.max}mm`;
+  const weightRange = getBeadWeightRange(product.variants) ||
+    `${FALLBACK_BEAD_WEIGHT_RANGE.min}g – ${FALLBACK_BEAD_WEIGHT_RANGE.max}g`;
+
+  let rows;
+  if (isKarungali) {
+    rows = [
+      toSpecRow("Origin", "Tamil Nadu, South India"),
+      toSpecRow("Wood Type", "Karungali (Diospyros ebenum)"),
+      toSpecRow("Craftsmanship", "Hand-turned and silver-capped in-house"),
+      toSpecRow("Bead Dimensions", dimensionRange),
+      toSpecRow("Bead Weight", weightRange),
+    ];
+  } else {
+    const isMalaProd = isMalaProduct(product.title);
+    const origin = resolveOrigin(product.title, isMalaProd);
+    const mukhiMatch = (product.title || "").match(/(\d{1,2})\s*Mukhi/i);
+    const mukhiLabel = mukhiMatch ? `${mukhiMatch[1]} Mukhi (RKRTL Verified)` : null;
+    const facts = getMukhiFacts(product.title);
+    rows = [
+      toSpecRow("Origin", origin && !origin.notStocked ? origin.metaShort : null),
+      toSpecRow("Mukhi Count", mukhiLabel),
+      toSpecRow("Authentication", "RKRTL X-Ray Certified (Raw, Edge-enhanced, Inverse views)"),
+      toSpecRow("Bead Dimensions", dimensionRange),
+      toSpecRow("Bead Weight", weightRange),
+      toSpecRow("Ruling Planet & Deity", facts && facts.planet && facts.deity ? `${facts.planet} / ${facts.deity}` : null),
+      toSpecRow("Chakra Alignment", facts ? facts.chakra || null : null),
+    ];
+  }
+  return renderSpecTable("Quick Specifications", "rk-quick-specs", rows);
+}
+
+// Builds the "Pricing & Availability" block from LIVE Shopify variant data.
+// ⚠️ This must always be built fresh from a just-fetched product — never
+// cache or bake this into stored AI-generated content, or it will go stale
+// exactly like the announcement-bar pricing-consistency issue already
+// flagged. The /products/:id/quick-specs route below fetches fresh every
+// time it's called for this reason.
+function buildPricingAvailabilityTable(product) {
+  const isKarungali = isKarungaliProduct(product);
+  const variants = product.variants || [];
+
+  const prices = variants.map(v => parseFloat(v.price)).filter(p => !isNaN(p));
+  const minPrice = prices.length ? Math.min(...prices) : null;
+  const maxPrice = prices.length ? Math.max(...prices) : null;
+  const priceDisplay = minPrice === null ? null
+    : minPrice === maxPrice ? `₹${minPrice.toLocaleString("en-IN")}`
+    : `₹${minPrice.toLocaleString("en-IN")} – ₹${maxPrice.toLocaleString("en-IN")}`;
+
+  const inventoryKnown = variants.some(v => typeof v.inventory_quantity === "number");
+  const totalInventory = variants.reduce((sum, v) => sum + (typeof v.inventory_quantity === "number" ? v.inventory_quantity : 0), 0);
+  const stockStatus = !inventoryKnown ? null
+    : totalInventory > 0 ? "In Stock (Ready for immediate dispatch)"
+    : "Currently Out of Stock";
+
+  const hasSilverCapping = variants.some(v => /silver capping/i.test(v.title || ""));
+  const packagingItems = isKarungali
+    ? [product.title, hasSilverCapping ? "Silver Capping (if selected)" : null, "Protective Packaging"].filter(Boolean)
+    : [product.title, "Physical RKRTL PVC Certificate Card with QR Verification Code", "Saffron Thread", hasSilverCapping ? "Silver Capping (if selected)" : null].filter(Boolean);
+
+  const rows = [
+    toSpecRow("Price", priceDisplay),
+    toSpecRow("Stock Status", stockStatus),
+    toSpecRow("Packaging Includes", packagingItems.join(", ")),
+  ];
+  return renderSpecTable("Pricing &amp; Availability", "rk-pricing-availability", rows);
+}
+
+// ─── Non-destructive block upsert ─────────────────────────────────────────
+// Inserts (or, on re-run, replaces in place) the Quick Specs and
+// Pricing/Availability blocks inside a marker comment pair, WITHOUT
+// regenerating or touching anything else in the existing body_html. This is
+// what makes the /products/:id/quick-specs route additive rather than a full
+// AI rewrite: whatever is currently live on the product page — hand edits,
+// a previous RSA v8 description, whatever — is left completely untouched
+// except for this one bounded block. Re-running is idempotent: the marker
+// pair is found and its contents swapped, never duplicated.
+const RK_BLOCK_START = "<!-- RK-QUICK-SPECS:START (auto-generated — do not edit between markers, re-running the Quick Specs push overwrites this block only) -->";
+const RK_BLOCK_END   = "<!-- RK-QUICK-SPECS:END -->";
+
+function upsertGeneratedBlocks(currentBodyHtml, quickSpecsHtml, pricingHtml) {
+  const blockInner = [quickSpecsHtml, pricingHtml].filter(Boolean).join("\n");
+  const block = `${RK_BLOCK_START}\n${blockInner}\n${RK_BLOCK_END}`;
+  const html = currentBodyHtml || "";
+
+  const startIdx = html.indexOf(RK_BLOCK_START);
+  const endIdx   = html.indexOf(RK_BLOCK_END);
+  if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+    // Marker pair already present from a prior run — replace in place only.
+    return html.slice(0, startIdx) + block + html.slice(endIdx + RK_BLOCK_END.length);
+  }
+
+  // First run — insert right after the first closing </h2> (matches "right
+  // under your main title" placement), or prepend if no <h2> is found.
+  const h2CloseIdx = html.search(/<\/h2>/i);
+  if (h2CloseIdx !== -1) {
+    const insertAt = h2CloseIdx + "</h2>".length;
+    return html.slice(0, insertAt) + "\n" + block + html.slice(insertAt);
+  }
+  return block + "\n" + html;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // ─── Verified Anchor Content Library ─────────────────────────────────────────
 // Real, non-templated content confirmed by Subbu against his actual operation
 // (RKRTL testing process, sourcing, and observed order patterns — July 2026).
@@ -800,11 +1210,6 @@ const ANCHOR_CONTENT_PRODUCT_SPECIFIC = {
   }],
 };
 
-// Returns the array of anchor content items (body paragraphs + FAQ pairs) that
-// apply to this specific product title. Universal items always included for
-// the isBead branch (checked by the caller); product-specific items appended
-// on top when the title matches. Returns [] rather than null when nothing
-// matches, so callers can always safely call .length / .filter on the result.
 function getAnchorContent(title) {
   const t = (title || "").toLowerCase();
   const items = [...ANCHOR_CONTENT_UNIVERSAL];
@@ -817,10 +1222,6 @@ function getAnchorContent(title) {
   return items;
 }
 
-// Builds the VERIFIED ANCHOR CONTENT prompt block, mirroring the same pattern
-// as buildMukhiFactsBlock/buildOriginBlock: state exactly what's confirmed,
-// and explicitly forbid inventing a substitute when nothing (or nothing more)
-// is available, rather than silently falling back to templated language.
 function buildAnchorContentBlock(items) {
   if (!items || items.length === 0) {
     return `VERIFIED ANCHOR CONTENT: None supplied for this product. Do NOT invent a "unique" operational detail, customer anecdote, or differentiator to fill this gap — a fabricated specific is worse than templated language. Omit any such passage entirely.\n`;
@@ -907,17 +1308,6 @@ function reformatFaqSection(html) {
 }
 
 // ─── Truncated-response safety net ────────────────────────────────────────────
-// If a generation hits the max_tokens ceiling mid-tag (e.g. cut off right after
-// "<p style" with no closing ">"), that fragment survives every tag-stripping
-// regex downstream (they all require a closing ">") and shows up as literal
-// garbled text in the rendered output — this was the exact cause of a FAQ
-// answer rendering as the raw string "<p style" instead of real content.
-// This trims any such incomplete trailing tag before reformatFaqSection or
-// ensureDeityPresent ever see it, so a truncation degrades gracefully (the
-// incomplete last FAQ/sentence is simply dropped) instead of rendering broken
-// HTML. Bumping max_tokens (below) addresses the root cause; this is the
-// defensive backstop for whenever a product's content still runs long enough
-// to hit the ceiling anyway (e.g. a bead with several stacked anchor FAQs).
 function stripTruncatedTrailingTag(html) {
   if (!html) return html;
   const lastOpen  = html.lastIndexOf("<");
@@ -1179,10 +1569,9 @@ DEPTH RULE (mandatory, applies specifically to "Traditional Benefits" and "Who S
     if (r.status === "rejected") console.error(`❌ Agent ${["description","metaTitle","metaDesc","tags","faq"][i]} failed:`, r.reason?.message || r.reason);
   });
 
-  const keywords = loadKeywords();
+  const keywords = await loadKeywordsAsync();
   if (!keywords[product.id]) {
-    keywords[product.id] = { productId: product.id, productTitle: product.title, keyword: autoKeyword(product.title), isCustom: false, addedAt: new Date().toISOString() };
-    saveKeywords(keywords);
+    await saveKeywordEntryAsync({ productId: product.id, productTitle: product.title, keyword: autoKeyword(product.title), isCustom: false, addedAt: new Date().toISOString() });
     console.log(`📊 Auto-registered for rank tracking: ${product.title}`);
   }
 
@@ -1355,9 +1744,10 @@ app.listen(PORT, async () => {
   console.log(`   Serper:        ${process.env.SERPER_API_KEY    ? "✅" : "❌ NOT SET"}`);
   console.log(`   Email:         ${process.env.EMAIL_SMTP_USER   ? "✅ " + process.env.EMAIL_SMTP_USER : "❌ NOT SET"}`);
   console.log(`   SEO Tool:      ✅ Served at /seo`);
-  console.log(`   Rank Tracking: ✅ Daily 6am IST · Weekly report Monday 7am IST`);
+  console.log(`   Rank Tracking: ✅ Daily 6am IST · Weekly report Monday 7am IST · Storage: ${DB_CONFIGURED ? "MySQL (Hostinger)" : "local JSON"}`);
   console.log(`   Citations:     ✅ Weekly Monday 7:30am IST · Dashboard at /citations/dashboard`);
   console.log(`   SEO Cron:      ✅ Sunday 11pm IST`);
   console.log(`   Audit Module:  ${auditModule ? "✅ Loaded" : "⚠️  Not loaded"}`);
+  if (DB_CONFIGURED) await ensureRankSchema();
   if (storedAccessToken) await registerWebhooks();
 });
