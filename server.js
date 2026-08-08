@@ -415,11 +415,17 @@ app.post("/products/:id/quick-specs", async (req, res) => {
       { headers: { "X-Shopify-Access-Token": storedAccessToken } }
     );
     const productData = await productRes.json();
-    if (!productRes.ok || !productData.product) return res.status(productRes.status || 404).json({ error: "Product fetch failed", details: productData });
+    if (!productRes.ok || !productData.product) {
+      console.error(`❌ Quick Specs push (${id}): product fetch failed —`, JSON.stringify(productData).slice(0, 500));
+      return res.status(productRes.status || 404).json({ error: "Product fetch failed", details: productData });
+    }
     const product = productData.product;
 
     const isService = isServiceProduct(product);
-    if (isService) return res.status(400).json({ error: "Quick Specs tables are for physical products, not services — this product was detected as a Puja/Homa service." });
+    if (isService) {
+      console.warn(`⚠️  Quick Specs push (${id}): rejected — "${product.title}" detected as a service product`);
+      return res.status(400).json({ error: "Quick Specs tables are for physical products, not services — this product was detected as a Puja/Homa service." });
+    }
 
     const quickSpecsHtml = buildQuickSpecsTable(product);
     const pricingHtml    = buildPricingAvailabilityTable(product);
@@ -430,10 +436,17 @@ app.post("/products/:id/quick-specs", async (req, res) => {
       { method: "PUT", headers: { "X-Shopify-Access-Token": storedAccessToken, "Content-Type": "application/json" }, body: JSON.stringify({ product: { id, body_html: updatedBodyHtml } }) }
     );
     const pushData = await pushRes.json();
-    if (!pushRes.ok) return res.status(pushRes.status).json({ error: "Push failed", details: pushData });
+    if (!pushRes.ok) {
+      console.error(`❌ Quick Specs push (${id}, "${product.title}"): Shopify PUT failed (status ${pushRes.status}) —`, JSON.stringify(pushData).slice(0, 800));
+      return res.status(pushRes.status).json({ error: "Push failed", details: pushData });
+    }
 
+    console.log(`✅ Quick Specs pushed for "${product.title}" (${id})`);
     res.json({ success: true, quickSpecsHtml, pricingHtml, bodyHtmlPreview: updatedBodyHtml });
-  } catch (err) { res.status(500).json({ error: "Quick Specs push failed", message: err.message }); }
+  } catch (err) {
+    console.error(`❌ Quick Specs push (${id}) threw an exception:`, err.message, err.stack ? "\n" + err.stack.slice(0, 500) : "");
+    res.status(500).json({ error: "Quick Specs push failed", message: err.message });
+  }
 });
 
 // Preview-only variant — builds the tables without pushing, so the UI can
@@ -447,7 +460,10 @@ app.get("/products/:id/quick-specs/preview", async (req, res) => {
       { headers: { "X-Shopify-Access-Token": storedAccessToken } }
     );
     const productData = await productRes.json();
-    if (!productRes.ok || !productData.product) return res.status(productRes.status || 404).json({ error: "Product fetch failed", details: productData });
+    if (!productRes.ok || !productData.product) {
+      console.error(`❌ Quick Specs preview (${id}): product fetch failed —`, JSON.stringify(productData).slice(0, 500));
+      return res.status(productRes.status || 404).json({ error: "Product fetch failed", details: productData });
+    }
     const product = productData.product;
     res.json({
       success: true,
@@ -455,7 +471,10 @@ app.get("/products/:id/quick-specs/preview", async (req, res) => {
       pricingHtml: buildPricingAvailabilityTable(product),
       hasExistingBlock: (product.body_html || "").includes(RK_BLOCK_START),
     });
-  } catch (err) { res.status(500).json({ error: "Preview failed", message: err.message }); }
+  } catch (err) {
+    console.error(`❌ Quick Specs preview (${id}) threw an exception:`, err.message);
+    res.status(500).json({ error: "Preview failed", message: err.message });
+  }
 });
 
 app.post("/ai/generate", async (req, res) => {
