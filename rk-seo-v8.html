@@ -201,6 +201,10 @@
   .rk-specs-table td { padding: 8px 12px; border-top: 1px solid var(--border); font-size: 12px; }
   .rk-specs-table td:first-child { width: 40%; color: var(--gold-lt); }
   .quick-specs-preview-wrap { background: var(--surface2); border: 1px solid var(--border2); border-radius: 8px; padding: 14px 16px; margin-top: 10px; }
+  .rk-custom-block { border-left: 3px solid var(--gold); padding-left: 12px; margin: 8px 0; }
+  .rk-custom-block h3 { color: var(--gold-lt); font-size: 14px; margin-bottom: 6px; }
+  .rk-custom-block p { color: var(--cream); font-size: 13px; line-height: 1.6; margin-bottom: 6px; }
+  .custom-block-item { background: var(--surface2); border: 1px solid var(--border2); border-radius: 6px; padding: 10px 12px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
   @media (max-width: 700px) { .two-col { grid-template-columns: 1fr; } .agent-grid { grid-template-columns: repeat(2,1fr); } .cann-grid, .seasonal-grid { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -261,6 +265,28 @@
       <div id="thinWarning" class="alert alert-warn mt-8 hidden">⚠ Thin content detected — this product has a very short or missing description.</div>
       <div id="originWarning" class="alert alert-warn mt-8 hidden">⚠ No verified origin mapping found for this product — the AI agents will omit origin claims rather than guess. If this product should have a known origin, flag it so the origin table can be updated.</div>
       <div id="notStockedWarning" class="alert alert-warn mt-8 hidden">⚠ This mukhi count in mala form is flagged as not currently stocked (per Subbu, July 2026). Double-check before generating content for this product.</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">📝 Custom Promotional Block <span style="text-transform:none;letter-spacing:0;font-size:11px">— your own text, inserted before FAQ, non-destructive</span></div>
+      <div class="text-muted" style="font-size:12px;margin-bottom:14px">Good for seasonal pushes — e.g. a Raksha Bandhan gifting note. Add now, remove later; several can be active at once, each tracked by its own label.</div>
+      <div class="content-section">
+        <div class="section-label">LABEL (used to manage this block later — e.g. "raksha-bandhan-2026")</div>
+        <input type="text" id="customBlockLabel" class="content-box editable" style="padding:10px 12px" placeholder="e.g. raksha-bandhan-2026"/>
+      </div>
+      <div class="content-section">
+        <div class="section-label">OPTIONAL HEADING</div>
+        <input type="text" id="customBlockHeading" class="content-box editable" style="padding:10px 12px" placeholder="e.g. A Modern Raksha Bandhan Gift"/>
+      </div>
+      <div class="content-section">
+        <div class="section-label">YOUR TEXT</div>
+        <textarea id="customBlockText" class="content-box editable" rows="4" placeholder="Write a few sentences here — separate paragraphs with a blank line."></textarea>
+      </div>
+      <div class="flex" style="gap:8px">
+        <button class="btn btn-primary btn-sm" onclick="pushCustomBlock()" id="pushCustomBlockBtn" disabled>➕ Push Custom Block</button>
+        <button class="btn btn-secondary btn-sm" onclick="loadCustomBlocks()" id="refreshCustomBlocksBtn" disabled>↻ Refresh Active Blocks</button>
+      </div>
+      <div id="customBlocksList" class="mt-16"></div>
     </div>
 
     <div class="card hidden" id="compSection">
@@ -885,6 +911,77 @@ async function pushQuickSpecs() {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── Custom Promotional Blocks — manual seasonal/marketing text ────────────
+// Wires the UI to the labelled-block endpoints on server.js. Each block is
+// identified by its own label, so several can be added/removed independently
+// without disturbing each other, Quick Specs, or the rest of the description.
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function loadCustomBlocks() {
+  if (!selectedProduct) return;
+  const list = document.getElementById("customBlocksList");
+  list.innerHTML = `<span class="spinner"></span> Loading active blocks…`;
+  try {
+    const res = await fetch(`${PROXY_URL}/products/${selectedProduct.id}/custom-block`);
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || "Failed to load blocks");
+    if (!data.blocks.length) {
+      list.innerHTML = `<div class="text-muted" style="font-size:12px">No custom blocks active on this product yet.</div>`;
+      return;
+    }
+    list.innerHTML = data.blocks.map(b => `
+      <div class="custom-block-item">
+        <div>
+          <div style="font-size:12px;color:var(--gold-lt);font-weight:bold">${escHtml(b.id)}</div>
+          ${b.heading ? `<div style="font-size:12px;color:var(--cream);margin-top:2px">${escHtml(b.heading)}</div>` : ""}
+          <div style="font-size:11px;color:var(--muted);margin-top:2px">${escHtml(b.preview)}${b.preview.length >= 140 ? "…" : ""}</div>
+        </div>
+        <button class="btn btn-danger btn-sm" onclick="removeCustomBlock('${b.id}')">Remove</button>
+      </div>`).join("");
+  } catch (e) {
+    list.innerHTML = `<div style="color:var(--red);font-size:12px">Failed to load: ${escHtml(e.message)}</div>`;
+  }
+}
+
+async function pushCustomBlock() {
+  if (!selectedProduct) return;
+  const text = document.getElementById("customBlockText").value.trim();
+  if (!text) { alert("Write something in the text box first."); return; }
+  const heading = document.getElementById("customBlockHeading").value.trim();
+  const blockId = document.getElementById("customBlockLabel").value.trim();
+  const btn = document.getElementById("pushCustomBlockBtn");
+  btn.disabled = true; btn.textContent = "Pushing…";
+  try {
+    const res = await fetch(`${PROXY_URL}/products/${selectedProduct.id}/custom-block`, {
+      method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ blockId, heading, text }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || "Push failed");
+    btn.textContent = "✅ Pushed"; btn.style.background = "var(--green)"; btn.style.color = "#000";
+    document.getElementById("customBlockLabel").value = data.blockId;
+    await loadCustomBlocks();
+    setTimeout(() => { btn.disabled = false; btn.textContent = "➕ Push Custom Block"; btn.style.background = ""; btn.style.color = ""; }, 2500);
+  } catch (e) {
+    btn.textContent = "❌ Failed — Retry"; btn.disabled = false;
+    console.error("Custom block push failed:", e.message);
+  }
+}
+
+async function removeCustomBlock(blockId) {
+  if (!selectedProduct) return;
+  if (!confirm(`Remove custom block "${blockId}" from this product? This can't be undone from here — you'd need to re-add it.`)) return;
+  try {
+    const res = await fetch(`${PROXY_URL}/products/${selectedProduct.id}/custom-block/${encodeURIComponent(blockId)}`, { method: "DELETE" });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || "Remove failed");
+    await loadCustomBlocks();
+  } catch (e) {
+    alert("Failed to remove: " + e.message);
+  }
+}
+
 // ─── Deity-presence safety net ────────────────────────────────────────────────
 function ensureDeityPresent(html, facts, productTitle) {
   if (!facts || !facts.deity || !html) return html;
@@ -1042,12 +1139,18 @@ function onProductChange() {
   const tBadge = document.getElementById("tulsiBadge");
   const previewSpecsBtn = document.getElementById("previewSpecsBtn");
   const pushSpecsBtn = document.getElementById("pushSpecsBtn");
+  const pushCustomBlockBtn = document.getElementById("pushCustomBlockBtn");
+  const refreshCustomBlocksBtn = document.getElementById("refreshCustomBlocksBtn");
   const quickSpecsPreview = document.getElementById("quickSpecsPreview");
   quickSpecsPreview.classList.add("hidden");
   quickSpecsPreview.innerHTML = "";
   pushSpecsBtn.disabled = true;
   pushSpecsBtn.textContent = "⚡ Push Quick Specs Only (non-destructive)";
   pushSpecsBtn.style.background = ""; pushSpecsBtn.style.color = "";
+  document.getElementById("customBlocksList").innerHTML = "";
+  document.getElementById("customBlockLabel").value = "";
+  document.getElementById("customBlockHeading").value = "";
+  document.getElementById("customBlockText").value = "";
 
   if (!selectedProduct) {
     badge.style.display = "none"; warning.classList.add("hidden"); svcBadge.classList.add("hidden");
@@ -1056,6 +1159,8 @@ function onProductChange() {
     if (sBadge) sBadge.classList.add("hidden");
     if (tBadge) tBadge.classList.add("hidden");
     previewSpecsBtn.disabled = true;
+    pushCustomBlockBtn.disabled = true;
+    refreshCustomBlocksBtn.disabled = true;
     return;
   }
 
@@ -1071,6 +1176,11 @@ function onProductChange() {
 
   // Quick Specs / Pricing tables apply to physical products only, not services.
   previewSpecsBtn.disabled = isSvc;
+
+  // Custom Promotional Blocks apply to any product type, including services.
+  pushCustomBlockBtn.disabled = false;
+  refreshCustomBlocksBtn.disabled = false;
+  loadCustomBlocks();
 
   originBadge.classList.add("hidden");
   originWarning.classList.add("hidden");
