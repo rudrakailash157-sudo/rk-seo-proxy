@@ -197,6 +197,10 @@
   .mt-8  { margin-top: 8px; }
   .mt-16 { margin-top: 16px; }
   .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .rk-specs-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  .rk-specs-table td { padding: 8px 12px; border-top: 1px solid var(--border); font-size: 12px; }
+  .rk-specs-table td:first-child { width: 40%; color: var(--gold-lt); }
+  .quick-specs-preview-wrap { background: var(--surface2); border: 1px solid var(--border2); border-radius: 8px; padding: 14px 16px; margin-top: 10px; }
   @media (max-width: 700px) { .two-col { grid-template-columns: 1fr; } .agent-grid { grid-template-columns: repeat(2,1fr); } .cann-grid, .seasonal-grid { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -248,6 +252,12 @@
         <span id="originBadge" class="service-badge hidden" style="background:#1A0A2A;color:#D090F0;border-color:#4A2A6A;"></span>
         <button class="btn btn-primary" onclick="runAllAgents()" id="runBtn" disabled>▶ Run AI SEO Agents</button>
       </div>
+      <div class="flex mt-8" style="gap:8px;flex-wrap:wrap">
+        <button class="btn btn-secondary btn-sm" onclick="previewQuickSpecs()" id="previewSpecsBtn" disabled>📋 Preview Quick Specs + Pricing</button>
+        <button class="btn btn-secondary btn-sm" onclick="pushQuickSpecs()" id="pushSpecsBtn" disabled>⚡ Push Quick Specs Only (non-destructive)</button>
+        <span class="text-muted" style="font-size:11px">Builds live price/stock/spec tables from Shopify data and inserts them into the existing description — doesn't touch or regenerate the rest of the page.</span>
+      </div>
+      <div id="quickSpecsPreview" class="quick-specs-preview-wrap hidden"></div>
       <div id="thinWarning" class="alert alert-warn mt-8 hidden">⚠ Thin content detected — this product has a very short or missing description.</div>
       <div id="originWarning" class="alert alert-warn mt-8 hidden">⚠ No verified origin mapping found for this product — the AI agents will omit origin claims rather than guess. If this product should have a known origin, flag it so the origin table can be updated.</div>
       <div id="notStockedWarning" class="alert alert-warn mt-8 hidden">⚠ This mukhi count in mala form is flagged as not currently stocked (per Subbu, July 2026). Double-check before generating content for this product.</div>
@@ -431,7 +441,7 @@
   <div class="flex-between" style="margin-bottom:20px">
     <div>
       <div class="text-gold" style="font-size:16px;margin-bottom:4px">📊 Google Rank Tracker</div>
-      <div class="text-muted">Daily checks at 6am IST · Google India + Global · Top 100</div>
+      <div class="text-muted">Daily checks at 6am IST · Google India + Global · Top 100 <span id="rankStorageBadge"></span></div>
     </div>
     <div class="flex">
       <button class="btn btn-secondary btn-sm" onclick="loadRankData()">↻ Refresh</button>
@@ -719,12 +729,11 @@ function buildMukhiFactsBlock(facts) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ─── Verified Anchor Content Library ─────────────────────────────────────────
-// Mirrors the server.js library exactly, so the in-browser preview (this file)
-// matches what the backend actually generates. See server.js for the full
-// design-rationale comment. Do NOT invent a "unique" detail per product to
-// fill a gap here — an unmatched product simply gets no anchor content, and
-// the prompt is instructed to omit the enhanced passage rather than guess.
+// ─── Verified Anchor Content Library (mirrors server.js exactly) ────────────
+// See server.js for the full design-rationale comment. Do NOT invent a
+// "unique" detail per product to fill a gap here — an unmatched product
+// simply gets no anchor content, and the prompt is instructed to omit the
+// enhanced passage rather than guess.
 // ═══════════════════════════════════════════════════════════════════════════
 
 const ANCHOR_CONTENT_UNIVERSAL = [
@@ -825,6 +834,57 @@ function buildAnchorContentBlock(items) {
 }
 // ═══════════════════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── Quick Specs + Pricing/Availability preview/push (mirrors server.js) ────
+// Actual table HTML is built server-side (deterministic, from live Shopify
+// variant data) via GET /products/:id/quick-specs/preview and
+// POST /products/:id/quick-specs — this section just wires the UI to those
+// endpoints. See server.js for buildQuickSpecsTable / buildPricingAvailabilityTable.
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function previewQuickSpecs() {
+  if (!selectedProduct) return;
+  const btn = document.getElementById("previewSpecsBtn");
+  const wrap = document.getElementById("quickSpecsPreview");
+  btn.disabled = true; btn.textContent = "Loading…";
+  wrap.classList.remove("hidden");
+  wrap.innerHTML = `<span class="spinner"></span> Building tables from live Shopify data…`;
+  try {
+    const res = await fetch(`${PROXY_URL}/products/${selectedProduct.id}/quick-specs/preview`);
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || "Preview failed");
+    wrap.innerHTML = `
+      <div class="text-muted" style="font-size:11px;letter-spacing:.5px;margin-bottom:8px">
+        PREVIEW — NOT YET PUSHED ${data.hasExistingBlock ? '· <span style="color:var(--gold)">this product already has a Quick Specs block — pushing again will replace it in place, not duplicate it</span>' : ""}
+      </div>
+      ${data.quickSpecsHtml || '<div class="text-muted">No Quick Specs rows available for this product.</div>'}
+      ${data.pricingHtml || ""}
+    `;
+    document.getElementById("pushSpecsBtn").disabled = false;
+  } catch (e) {
+    wrap.innerHTML = `<div style="color:var(--red)">Preview failed: ${escHtml(e.message)}</div>`;
+  }
+  btn.disabled = false; btn.textContent = "📋 Preview Quick Specs + Pricing";
+}
+
+async function pushQuickSpecs() {
+  if (!selectedProduct) return;
+  const btn = document.getElementById("pushSpecsBtn");
+  btn.disabled = true; btn.textContent = "Pushing…";
+  try {
+    const res = await fetch(`${PROXY_URL}/products/${selectedProduct.id}/quick-specs`, { method: "POST" });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || "Push failed");
+    btn.textContent = "✅ Pushed — existing content untouched";
+    btn.style.background = "var(--green)"; btn.style.color = "#000";
+    setTimeout(() => { btn.disabled = false; btn.textContent = "⚡ Push Quick Specs Only (non-destructive)"; btn.style.background = ""; btn.style.color = ""; }, 3000);
+  } catch (e) {
+    btn.textContent = "❌ Failed — Retry";
+    btn.disabled = false;
+    console.error("Quick Specs push failed:", e.message);
+  }
+}
+
 // ─── Deity-presence safety net ────────────────────────────────────────────────
 function ensureDeityPresent(html, facts, productTitle) {
   if (!facts || !facts.deity || !html) return html;
@@ -894,15 +954,6 @@ function reformatFaqSection(html) {
 }
 
 // ─── Truncated-response safety net ────────────────────────────────────────────
-// Mirrors server.js exactly. If a generation hits the max_tokens ceiling
-// mid-tag (e.g. cut off right after "<p style" with no closing ">"), that
-// fragment survives every tag-stripping regex downstream (they all require a
-// closing ">") and shows up as literal garbled text in the rendered output —
-// this was the exact cause of a FAQ answer rendering as the raw string
-// "<p style" instead of real content. This trims any such incomplete trailing
-// tag before reformatFaqSection or ensureDeityPresent ever see it, so a
-// truncation degrades gracefully (the incomplete last FAQ/sentence is simply
-// dropped) instead of rendering broken HTML.
 function stripTruncatedTrailingTag(html) {
   if (!html) return html;
   const lastOpen  = html.lastIndexOf("<");
@@ -989,12 +1040,22 @@ function onProductChange() {
   const kBadge = document.getElementById("karungaliBadge");
   const sBadge = document.getElementById("sphatikBadge");
   const tBadge = document.getElementById("tulsiBadge");
+  const previewSpecsBtn = document.getElementById("previewSpecsBtn");
+  const pushSpecsBtn = document.getElementById("pushSpecsBtn");
+  const quickSpecsPreview = document.getElementById("quickSpecsPreview");
+  quickSpecsPreview.classList.add("hidden");
+  quickSpecsPreview.innerHTML = "";
+  pushSpecsBtn.disabled = true;
+  pushSpecsBtn.textContent = "⚡ Push Quick Specs Only (non-destructive)";
+  pushSpecsBtn.style.background = ""; pushSpecsBtn.style.color = "";
+
   if (!selectedProduct) {
     badge.style.display = "none"; warning.classList.add("hidden"); svcBadge.classList.add("hidden");
     originBadge.classList.add("hidden"); originWarning.classList.add("hidden"); notStockedWarning.classList.add("hidden");
     if (kBadge) kBadge.classList.add("hidden");
     if (sBadge) sBadge.classList.add("hidden");
     if (tBadge) tBadge.classList.add("hidden");
+    previewSpecsBtn.disabled = true;
     return;
   }
 
@@ -1007,6 +1068,9 @@ function onProductChange() {
   if (kBadge) kBadge.classList.toggle("hidden", !isKar);
   if (sBadge) sBadge.classList.toggle("hidden", !isSph);
   if (tBadge) tBadge.classList.toggle("hidden", !isTul);
+
+  // Quick Specs / Pricing tables apply to physical products only, not services.
+  previewSpecsBtn.disabled = isSvc;
 
   originBadge.classList.add("hidden");
   originWarning.classList.add("hidden");
@@ -1602,6 +1666,11 @@ async function loadRankData() {
     const res = await fetch(PROXY_URL + "/rank/data");
     const data = await res.json();
     rankDataCache = data.rankData || {}; keywordsCache = data.keywords || {};
+    const badge = document.getElementById("rankStorageBadge");
+    if (badge) {
+      badge.textContent = data.storage === "mysql" ? "· 🗄️ MySQL (Hostinger)" : "· 📄 Local JSON";
+      badge.style.color = data.storage === "mysql" ? "var(--green)" : "var(--muted)";
+    }
     renderRankTable();
   } catch(e) { console.error("Load rank data failed:", e); }
 }
