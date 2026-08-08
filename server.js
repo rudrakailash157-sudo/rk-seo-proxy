@@ -780,6 +780,19 @@ cron.schedule("0 2 * * 1", async () => {
 }, { timezone: "UTC" });
 
 // ─── Service product detection ────────────────────────────────────────────────
+// NOTE (Aug 2026 fix): title/tags are a reliable signal for actual Puja/Homa
+// service listings — their product titles are named things like "X Homa" or
+// "X Puja" directly. The product DESCRIPTION text is much noisier: a real
+// Rudraksha bead's AI-written description legitimately discusses traditional
+// use-cases and often mentions generic devotional words like "puja",
+// "abhishek", or "ritual" in passing (e.g. "worn during puja for clarity").
+// Checking those generic single words against the description caused real
+// bead products to be misdetected as services, which incorrectly blocked the
+// Quick Specs push for them. The description is now only checked against
+// strong, service-specific phrases that a real service listing's own
+// description would contain (per the isService prompt template below, which
+// always mentions "MVS Vedapadasala" / "vadhyar" / "online puja" etc.) —
+// never a single generic word.
 function isServiceProduct(product) {
   const title = (product.title || "").toLowerCase();
   const tags  = (product.tags  || "").toLowerCase();
@@ -790,7 +803,14 @@ function isServiceProduct(product) {
     "vedic fire", "online puja", "online homa", "rudra abhishek",
     "sundara kanda", "vishnu sahasranama", "kanda parayanam",
   ];
-  return serviceKeywords.some(kw => title.includes(kw) || tags.includes(kw) || body.includes(kw));
+  if (serviceKeywords.some(kw => title.includes(kw) || tags.includes(kw))) return true;
+
+  const strongServiceDescriptionPhrases = [
+    "online puja", "online homa", "vedic fire", "fire ritual",
+    "rudra abhishek", "sundara kanda", "vishnu sahasranama", "kanda parayanam",
+    "mvs vedapadasala", "vadhyar",
+  ];
+  return strongServiceDescriptionPhrases.some(kw => body.includes(kw));
 }
 
 // ─── Karungali product detection ─────────────────────────────────────────────
