@@ -1361,8 +1361,9 @@ async function runAllAgents() {
     const totalKw = (extractedKeywords.h1||[]).length + (extractedKeywords.h2h3||[]).length + (extractedKeywords.phrases||[]).length;
     setAgent("keywords", "done", totalKw > 0 ? `✓ ${totalKw} keywords` : "✓ No keywords");
 
-    const manualKeywords = parseManualKeywords(document.getElementById("manualKeywords")?.value);
+    let manualKeywords = parseManualKeywords(document.getElementById("manualKeywords")?.value);
     if (manualKeywords.length > 0) console.log(`🔑 ${manualKeywords.length} manual keyword(s) supplied by store owner, merging with extracted keywords`);
+    manualKeywords = dedupeManualKeywords(manualKeywords, extractedKeywords);
 
     let keywordBriefParts = [];
     if (totalKw > 0) {
@@ -1608,6 +1609,30 @@ function parseManualKeywords(raw) {
     .split(/[\n,]+/)
     .map(k => k.trim())
     .filter(Boolean);
+}
+
+// Drops any manual keyword that's an exact match (case-insensitive, trimmed)
+// for something already present in the competitor-extracted H1/H2-H3/phrase
+// lists — otherwise the same keyword shows up twice in the brief sent to the
+// writer (once as "H1 PRIMARY" and again as "STORE OWNER KEYWORDS"), which
+// nudges the model toward over-repeating that exact phrase across multiple
+// sections. This is exact-string matching only, not fuzzy/near-duplicate
+// detection — "7 Mukhi Rudraksha Benefits" and "Benefits of 7 Mukhi
+// Rudraksha" are still treated as two different keywords, by design, since
+// they target different phrasing/search intent even though they overlap.
+function dedupeManualKeywords(manualKeywords, extractedKeywords) {
+  const existing = new Set(
+    [...(extractedKeywords.h1||[]), ...(extractedKeywords.h2h3||[]), ...(extractedKeywords.phrases||[])]
+      .map(k => k.trim().toLowerCase())
+  );
+  const kept = [], dropped = [];
+  for (const kw of manualKeywords) {
+    (existing.has(kw.trim().toLowerCase()) ? dropped : kept).push(kw);
+  }
+  if (dropped.length > 0) {
+    console.log(`🔑 Skipped ${dropped.length} manual keyword(s) already present in competitor extraction: ${dropped.join(", ")}`);
+  }
+  return kept;
 }
 
 function extractJsonValue(text) {
