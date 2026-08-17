@@ -1,612 +1,925 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8"/>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&display=swap" rel="stylesheet">
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>RudraKailash Agentic SEO v8</title>
-<style>
-  :root {
-    --bg:       #0D0500;
-    --surface:  #1A0A00;
-    --surface2: #120600;
-    --border:   #2E1500;
-    --border2:  #3E2010;
-    --gold:     #D4A017;
-    --gold-lt:  #F0C84A;
-    --maroon:   #7B1C1C;
-    --cream:    #F5E6C8;
-    --muted:    #9A7050;
-    --muted2:   #5A3020;
-    --green:    #7FD48A;
-    --red:      #F08080;
-    --blue:     #80C0F0;
-    --purple:   #C080F0;
-    --orange:   #F0A050;
+require("dotenv").config();
+const express    = require("express");
+const cors       = require("cors");
+const fetch      = require("node-fetch");
+const fs         = require("fs");
+const path       = require("path");
+const cron       = require("node-cron");
+const nodemailer = require("nodemailer");
+let mysql = null;
+try { mysql = require("mysql2/promise"); }
+catch (e) { console.warn("⚠️  mysql2 not installed — run `npm install mysql2` to enable MySQL rank-tracker storage. Falling back to local JSON files."); }
+
+let auditModule = null;
+try {
+  auditModule = require("./audit/index");
+  console.log("✅ Audit module loaded from ./audit/index");
+} catch (e) {
+  console.warn("⚠️  Audit module not loaded (SEO features unaffected):", e.message);
+}
+
+const app  = express();
+const PORT = process.env.PORT || 3001;
+
+const TOKEN_FILE      = path.join(__dirname, ".shopify_token");
+const RANK_DATA_FILE  = path.join(__dirname, ".rank_data.json");
+const KEYWORDS_FILE   = path.join(__dirname, ".keywords.json");
+const CITATION_QUERIES_FILE = path.join(__dirname, ".citation_queries.json");
+const CITATION_DATA_FILE    = path.join(__dirname, ".citation_data.json");
+
+function loadToken() {
+  try {
+    if (fs.existsSync(TOKEN_FILE)) {
+      const t = fs.readFileSync(TOKEN_FILE, "utf8").trim();
+      if (t) return t;
+    }
+  } catch (e) { console.warn("⚠️  Token file error:", e.message); }
+  return process.env.SHOPIFY_ACCESS_TOKEN || null;
+}
+
+function saveToken(token) {
+  try { fs.writeFileSync(TOKEN_FILE, token, "utf8"); console.log("💾 Token saved"); }
+  catch (e) { console.warn("⚠️  Token save error:", e.message); }
+}
+
+function loadRankData() {
+  try {
+    if (fs.existsSync(RANK_DATA_FILE)) return JSON.parse(fs.readFileSync(RANK_DATA_FILE, "utf8"));
+  } catch (e) { console.warn("⚠️  Rank data load error:", e.message); }
+  return {};
+}
+
+function saveRankData(data) {
+  try { fs.writeFileSync(RANK_DATA_FILE, JSON.stringify(data, null, 2), "utf8"); }
+  catch (e) { console.warn("⚠️  Rank data save error:", e.message); }
+}
+
+function loadKeywords() {
+  try {
+    if (fs.existsSync(KEYWORDS_FILE)) return JSON.parse(fs.readFileSync(KEYWORDS_FILE, "utf8"));
+  } catch (e) { console.warn("⚠️  Keywords load error:", e.message); }
+  return {};
+}
+
+function saveKeywords(data) {
+  try { fs.writeFileSync(KEYWORDS_FILE, JSON.stringify(data, null, 2), "utf8"); }
+  catch (e) { console.warn("⚠️  Keywords save error:", e.message); }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── Rank Tracker Storage — MySQL (Hostinger) with local-JSON fallback ──────
+// Render's filesystem is not guaranteed persistent across redeploys/restarts
+// on most plans, so the original .rank_data.json / .keywords.json files are
+// at risk of being wiped. This moves rank-tracker storage to the existing
+// Hostinger MySQL DB (the one already used for RKRTL certificates) when
+// configured, and transparently falls back to the original JSON-file
+// functions above if the DB env vars aren't set, the connection fails, or
+// mysql2 isn't installed — so nothing breaks if the DB isn't reachable yet.
+//
+// REQUIRED before this actually uses MySQL:
+//   1. `npm install mysql2` (added to package.json)
+//   2. Render env vars: HOSTINGER_DB_HOST, HOSTINGER_DB_USER,
+//      HOSTINGER_DB_PASSWORD, HOSTINGER_DB_NAME
+//   3. Hostinger hPanel → Remote MySQL → allow the IP(s) Render connects
+//      from. Shared hosting blocks external MySQL connections by default —
+//      this is the most common reason the pool will fail to connect even
+//      with correct credentials. Render's outbound IP can change on some
+//      plans, so a static-IP add-on or an SSH/proxy tunnel may be needed if
+//      wildcard remote access isn't available on the Hostinger plan.
+// Until all three are true, rank tracking keeps working exactly as before,
+// on local JSON — this code degrades safely rather than breaking anything.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const DB_HOST     = process.env.HOSTINGER_DB_HOST     || "";
+const DB_USER     = process.env.HOSTINGER_DB_USER     || "";
+const DB_PASSWORD = process.env.HOSTINGER_DB_PASSWORD || "";
+const DB_NAME     = process.env.HOSTINGER_DB_NAME     || "";
+const DB_CONFIGURED = !!(mysql && DB_HOST && DB_USER && DB_NAME);
+
+let dbPool = null;
+if (DB_CONFIGURED) {
+  dbPool = mysql.createPool({
+    host: DB_HOST, user: DB_USER, password: DB_PASSWORD, database: DB_NAME,
+    waitForConnections: true, connectionLimit: 5, queueLimit: 0, connectTimeout: 8000,
+  });
+  console.log(`🗄️  MySQL rank-tracker pool configured for ${DB_HOST}/${DB_NAME}`);
+} else {
+  console.warn("⚠️  MySQL env vars not set (HOSTINGER_DB_HOST/USER/PASSWORD/NAME) — rank tracker using local JSON files");
+}
+
+let dbSchemaReady = false;
+// Returns true if MySQL is configured AND reachable AND schema is ready — every
+// DB-backed function below checks this first and falls back to the JSON file
+// functions above if it's false, so a DB outage never takes down rank tracking.
+async function ensureRankSchema() {
+  if (!dbPool) return false;
+  if (dbSchemaReady) return true;
+  try {
+    await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS rk_rank_keywords (
+        product_id     VARCHAR(64)  NOT NULL PRIMARY KEY,
+        product_title  VARCHAR(500) NOT NULL,
+        keyword        VARCHAR(500) NOT NULL,
+        is_custom      TINYINT(1)   NOT NULL DEFAULT 0,
+        added_at       DATETIME     NOT NULL
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    await dbPool.query(`
+      CREATE TABLE IF NOT EXISTS rk_rank_history (
+        id           INT AUTO_INCREMENT PRIMARY KEY,
+        product_id   VARCHAR(64) NOT NULL,
+        check_date   DATE        NOT NULL,
+        pos_in       INT         NULL,
+        pos_global   INT         NULL,
+        checked_at   DATETIME    NOT NULL,
+        UNIQUE KEY uniq_product_date (product_id, check_date),
+        INDEX idx_product (product_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    dbSchemaReady = true;
+    console.log("🗄️  MySQL rank-tracker schema ready (rk_rank_keywords, rk_rank_history)");
+    return true;
+  } catch (e) {
+    console.error("❌ MySQL schema init failed — rank tracker falling back to local JSON files for this session:", e.message);
+    return false;
   }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--cream); font-family: Georgia, serif; min-height: 100vh; }
-  .header { background: var(--surface2); border-bottom: 1px solid var(--border); padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
-  .header-logo { display: flex; align-items: center; gap: 12px; }
-  .logo-icon { width: 36px; height: 36px; background: var(--maroon); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 18px; }
-  .logo-text h1 { font-size: 15px; color: var(--gold-lt); letter-spacing: 1px; }
-  .logo-text p  { font-size: 11px; color: var(--muted); }
-  .header-actions { display: flex; gap: 10px; align-items: center; }
-  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #444; display: inline-block; margin-right: 6px; }
-  .status-dot.connected { background: var(--green); box-shadow: 0 0 6px var(--green); }
-  .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); background: var(--surface2); padding: 0 24px; overflow-x: auto; }
-  .tab { padding: 12px 18px; font-size: 12px; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; transition: all .2s; letter-spacing: .5px; white-space: nowrap; }
-  .tab:hover { color: var(--cream); }
-  .tab.active { color: var(--gold-lt); border-bottom-color: var(--gold); }
-  .main { padding: 24px; max-width: 1100px; margin: 0 auto; }
-  .btn { padding: 9px 20px; border-radius: 6px; border: none; cursor: pointer; font-family: Georgia, serif; font-size: 13px; transition: all .2s; }
-  .btn-primary  { background: var(--gold); color: var(--bg); font-weight: bold; }
-  .btn-primary:hover { background: var(--gold-lt); }
-  .btn-secondary { background: transparent; color: var(--muted); border: 1px solid var(--border2); }
-  .btn-secondary:hover { color: var(--cream); border-color: var(--muted); }
-  .btn-danger   { background: var(--maroon); color: var(--cream); }
-  .btn-danger:hover { background: #9B2C2C; }
-  .btn-purple   { background: #3A1A5A; color: var(--purple); border: 1px solid #6A3A9A; }
-  .btn-purple:hover { background: #4A2A6A; }
-  .btn-sm { padding: 5px 12px; font-size: 12px; }
-  .btn:disabled { opacity: .4; cursor: not-allowed; }
-  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 16px; }
-  .card-title { font-size: 12px; color: var(--muted); letter-spacing: 1px; margin-bottom: 14px; text-transform: uppercase; }
-  .connect-panel { max-width: 480px; margin: 60px auto; text-align: center; padding: 40px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
-  .connect-panel h2 { color: var(--gold-lt); margin-bottom: 8px; }
-  .connect-panel p  { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
-  .product-select { width: 100%; padding: 10px 14px; background: var(--surface2); border: 1px solid var(--border2); color: var(--cream); border-radius: 6px; font-family: Georgia, serif; font-size: 14px; }
-  .product-row { display: flex; align-items: center; gap: 10px; }
-  .thin-badge { font-size: 10px; padding: 2px 8px; border-radius: 8px; white-space: nowrap; }
-  .thin-rich  { background: #0A2A0A; color: var(--green); border: 1px solid #1A5A1A; }
-  .thin-ok    { background: #2A2A00; color: #D4D48A; border: 1px solid #4A4A00; }
-  .thin-thin  { background: #2A0A00; color: var(--red); border: 1px solid #5A1A00; }
-  #thinBadge  { font-size: 11px; }
-  .service-badge { background: #0A1A2A; color: var(--blue); border: 1px solid #1A4A6A; font-size: 10px; padding: 2px 8px; border-radius: 8px; }
-  .agent-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 16px 0; }
-  .agent-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 12px; text-align: center; }
-  .agent-card .agent-icon { font-size: 20px; margin-bottom: 6px; }
-  .agent-card .agent-name { font-size: 10px; color: var(--muted); letter-spacing: .5px; }
-  .agent-card .agent-status { font-size: 10px; margin-top: 4px; }
-  .agent-card.running { border-color: var(--gold); }
-  .agent-card.done    { border-color: var(--green); }
-  .agent-card.error   { border-color: var(--red); }
-  .score-display { display: flex; align-items: center; gap: 24px; padding: 16px; background: var(--surface2); border-radius: 8px; margin: 12px 0; flex-wrap: wrap; }
-  .score-num { font-size: 42px; font-weight: bold; font-family: 'Courier New', monospace; }
-  .score-num.low  { color: var(--red); }
-  .score-num.mid  { color: var(--gold); }
-  .score-num.high { color: var(--green); }
-  .score-label    { font-size: 11px; color: var(--muted); letter-spacing: 1px; }
-  .score-arrow    { font-size: 24px; color: var(--muted); }
-  .sge-score-wrap { margin-left: auto; padding: 12px 20px; background: #0A0A2A; border: 1px solid #2A2A6A; border-radius: 8px; text-align: center; min-width: 120px; }
-  .sge-score-num  { font-size: 32px; font-weight: bold; font-family: 'Courier New', monospace; }
-  .sge-score-num.sge-low  { color: var(--red); }
-  .sge-score-num.sge-mid  { color: var(--orange); }
-  .sge-score-num.sge-high { color: var(--blue); }
-  .sge-score-label { font-size: 10px; color: #6080C0; letter-spacing: 1px; margin-top: 2px; }
-  .sge-passages { margin-top: 12px; }
-  .sge-passage-item { background: var(--surface2); border-left: 3px solid var(--border2); padding: 8px 12px; margin-bottom: 6px; font-size: 12px; border-radius: 0 6px 6px 0; }
-  .sge-passage-item.sge-p-high { border-left-color: var(--blue); }
-  .sge-passage-item.sge-p-mid  { border-left-color: var(--orange); }
-  .sge-passage-item.sge-p-low  { border-left-color: var(--red); }
-  .sge-p-score { font-size: 10px; color: var(--muted); float: right; font-family: 'Courier New', monospace; }
-  .content-section { margin-bottom: 20px; }
-  .section-label { font-size: 11px; color: var(--muted); letter-spacing: 1px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }
-  .section-tag { font-size: 10px; padding: 2px 8px; border-radius: 10px; }
-  .tag-current { background: var(--maroon); color: #ffaaaa; }
-  .tag-new     { background: #1A3A0A; color: var(--green); }
-  .content-box { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 12px; font-size: 13px; color: var(--cream); min-height: 48px; line-height: 1.6; }
-  .content-box.editable { border-color: var(--border2); }
-  .content-box.editable:focus { outline: none; border-color: var(--gold); }
-  textarea.content-box { width: 100%; resize: vertical; font-family: Georgia, serif; }
-  .char-count { font-size: 11px; color: var(--muted); text-align: right; margin-top: 4px; }
-  .tags-wrap { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-  .tag-pill { background: var(--surface2); border: 1px solid var(--border2); border-radius: 12px; padding: 3px 10px; font-size: 12px; color: var(--muted); }
-  .tag-pill.new { border-color: var(--gold); color: var(--gold-lt); }
-  .progress-bar { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; margin: 8px 0; }
-  .progress-fill { height: 100%; border-radius: 2px; transition: width .5s; }
-  .comp-item { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 10px 14px; margin-bottom: 8px; font-size: 12px; }
-  .comp-url  { color: var(--gold); font-size: 11px; margin-bottom: 4px; word-break: break-all; }
-  .comp-snippet { color: var(--muted); line-height: 1.5; }
-  .comp-badge { display: inline-block; font-size: 10px; padding: 1px 7px; border-radius: 8px; margin-left: 8px; }
-  .badge-fetched  { background: #1A3A0A; color: var(--green); }
-  .badge-snippet  { background: #3A2A00; color: var(--gold); }
-  .gap-tag { display: inline-block; background: #1A1A3A; border: 1px solid #4040AA; color: #AAAAFF; border-radius: 12px; padding: 3px 10px; font-size: 11px; margin: 3px; }
-  .kw-tag-h1     { display: inline-block; background: #2A1A00; border: 1px solid #8A5000; color: #F0A050; border-radius: 12px; padding: 3px 10px; font-size: 11px; margin: 3px; font-weight: bold; }
-  .kw-tag-h2h3   { display: inline-block; background: #1A0A2A; border: 1px solid #6A3A8A; color: #D090F0; border-radius: 12px; padding: 3px 10px; font-size: 11px; margin: 3px; }
-  .kw-tag-phrase { display: inline-block; background: #001A1A; border: 1px solid #006060; color: #60C0C0; border-radius: 12px; padding: 3px 10px; font-size: 11px; margin: 3px; }
-  .kw-legend     { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; margin-right: 16px; color: var(--muted); }
-  .jsonld-wrap { background: #050D05; border: 1px solid #1A3A1A; border-radius: 8px; padding: 16px; margin-top: 12px; }
-  .jsonld-code { font-family: 'Courier New', monospace; font-size: 11px; color: #88CC88; white-space: pre-wrap; word-break: break-all; max-height: 320px; overflow-y: auto; line-height: 1.6; }
-  .copy-btn { background: #1A3A1A; color: var(--green); border: 1px solid #2A5A2A; padding: 5px 14px; border-radius: 5px; font-size: 11px; cursor: pointer; }
-  .copy-btn:hover { background: #2A5A2A; }
-  .faq-item { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 12px 16px; margin-bottom: 8px; }
-  .faq-q { color: var(--gold-lt); font-size: 13px; margin-bottom: 4px; }
-  .faq-a { color: var(--muted); font-size: 12px; line-height: 1.6; }
-  .rank-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
-  .rank-stat { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; text-align: center; }
-  .rank-stat-num { font-size: 32px; font-weight: bold; font-family: 'Courier New', monospace; }
-  .rank-stat-label { font-size: 11px; color: var(--muted); letter-spacing: 1px; margin-top: 4px; }
-  .rank-table { width: 100%; border-collapse: collapse; }
-  .rank-table th { padding: 10px 14px; text-align: left; color: var(--muted); font-size: 11px; letter-spacing: 1px; font-weight: normal; border-bottom: 1px solid var(--border); }
-  .rank-table td { padding: 12px 14px; border-bottom: 1px solid var(--border); font-size: 13px; vertical-align: middle; }
-  .rank-table tr:hover td { background: rgba(255,255,255,.02); }
-  .pos-badge { display: inline-block; padding: 3px 10px; border-radius: 10px; font-size: 12px; font-weight: bold; font-family: 'Courier New', monospace; }
-  .pos-1-3   { background: #2A3A00; color: #AAFF44; border: 1px solid #4A6A00; }
-  .pos-4-10  { background: #1A3A0A; color: var(--green); border: 1px solid #2A5A1A; }
-  .pos-11-30 { background: #2A2A0A; color: #D4D48A; border: 1px solid #4A4A1A; }
-  .pos-31-100{ background: #3A2A00; color: var(--gold); border: 1px solid #5A4A00; }
-  .pos-none  { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
-  .trend-up   { color: var(--green); font-weight: bold; }
-  .trend-down { color: var(--red); font-weight: bold; }
-  .trend-same { color: var(--muted); }
-  .trend-new  { color: var(--blue); font-size: 11px; }
-  .keyword-input { background: var(--surface2); border: 1px solid var(--border2); color: var(--cream); padding: 5px 10px; border-radius: 5px; font-family: Georgia, serif; font-size: 12px; width: 220px; }
-  .keyword-input:focus { outline: none; border-color: var(--gold); }
-  .chart-container { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-top: 16px; height: 280px; position: relative; }
-  .cann-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
-  .cann-stat { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; text-align: center; }
-  .cann-stat-num { font-size: 32px; font-weight: bold; font-family: 'Courier New', monospace; }
-  .conflict-card { background: var(--surface); border: 1px solid #5A2A5A; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
-  .conflict-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-  .conflict-severity { font-size: 11px; padding: 2px 10px; border-radius: 8px; }
-  .sev-high { background: #3A0A0A; color: var(--red); border: 1px solid #6A1A1A; }
-  .sev-med  { background: #3A2A00; color: var(--orange); border: 1px solid #6A4A00; }
-  .sev-low  { background: #1A2A1A; color: #88AA88; border: 1px solid #2A4A2A; }
-  .conflict-products { margin: 8px 0; }
-  .conflict-product  { font-size: 12px; color: var(--cream); padding: 4px 0; border-bottom: 1px solid var(--border); }
-  .conflict-product:last-child { border: none; }
-  .conflict-shared { margin-top: 8px; }
-  .shared-kw { display: inline-block; background: #2A1A2A; border: 1px solid #5A2A5A; color: #D080D0; border-radius: 10px; padding: 2px 8px; font-size: 11px; margin: 2px; }
-  .cann-empty { text-align: center; padding: 60px; color: var(--muted); }
-  .seasonal-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
-  .seasonal-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
-  .seasonal-festival { color: var(--gold-lt); font-size: 14px; margin-bottom: 4px; }
-  .seasonal-date     { color: var(--muted); font-size: 11px; margin-bottom: 8px; }
-  .seasonal-products { display: flex; flex-wrap: wrap; gap: 4px; }
-  .seasonal-prod-pill { background: #1A1A00; border: 1px solid #3A3A00; color: #D4D48A; border-radius: 10px; padding: 2px 8px; font-size: 11px; }
-  .seasonal-days { font-size: 11px; padding: 2px 8px; border-radius: 8px; margin-left: 8px; }
-  .days-urgent  { background: #3A0A0A; color: var(--red); }
-  .days-soon    { background: #3A2A00; color: var(--orange); }
-  .days-upcoming{ background: #0A2A0A; color: var(--green); }
-  .alert { padding: 12px 16px; border-radius: 6px; font-size: 13px; margin-bottom: 16px; }
-  .alert-success { background: #0A2A0A; border: 1px solid #2A5A2A; color: var(--green); }
-  .alert-info    { background: #0A1A2A; border: 1px solid #1A3A5A; color: var(--blue); }
-  .alert-warn    { background: #2A1A00; border: 1px solid #5A3A00; color: var(--gold); }
-  .alert-purple  { background: #0A0A2A; border: 1px solid #2A2A6A; color: var(--purple); }
-  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border2); border-top-color: var(--gold); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: middle; margin-right: 6px; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .pulse { animation: pulse 1.5s ease-in-out infinite; }
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
-  .desc-preview { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 16px; font-size: 13px; line-height: 1.7; color: var(--cream); }
-  .desc-preview h2, .desc-preview h3 { color: var(--gold-lt); margin: 12px 0 6px; }
-  .desc-preview ul { padding-left: 20px; }
-  .desc-preview li { margin-bottom: 4px; color: var(--muted); }
-  .desc-preview p  { margin-bottom: 8px; }
-  .desc-preview dl { margin-top: 8px; }
-  .desc-preview dt { color: var(--cream); font-weight: bold; margin-top: 16px; }
-  .desc-preview dd { color: var(--muted); margin: 4px 0 0 0; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
-  .desc-preview dd:last-child { border-bottom: none; padding-bottom: 0; }
-  .divider { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
-  .flex { display: flex; gap: 12px; align-items: center; }
-  .flex-between { display: flex; justify-content: space-between; align-items: center; }
-  .text-muted { color: var(--muted); font-size: 13px; }
-  .text-gold  { color: var(--gold-lt); }
-  .hidden { display: none !important; }
-  .mt-8  { margin-top: 8px; }
-  .mt-16 { margin-top: 16px; }
-  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  .rk-specs-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-  .rk-specs-table td { padding: 8px 12px; border-top: 1px solid var(--border); font-size: 12px; }
-  .rk-specs-table td:first-child { width: 40%; color: var(--gold-lt); }
-  .quick-specs-preview-wrap { background: var(--surface2); border: 1px solid var(--border2); border-radius: 8px; padding: 14px 16px; margin-top: 10px; }
-  .rk-custom-block { border-left: 3px solid var(--gold); padding-left: 12px; margin: 8px 0; }
-  .rk-custom-block h3 { color: var(--gold-lt); font-size: 14px; margin-bottom: 6px; }
-  .rk-custom-block p { color: var(--cream); font-size: 13px; line-height: 1.6; margin-bottom: 6px; }
-  .custom-block-item { background: var(--surface2); border: 1px solid var(--border2); border-radius: 6px; padding: 10px 12px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
-  @media (max-width: 700px) { .two-col { grid-template-columns: 1fr; } .agent-grid { grid-template-columns: repeat(2,1fr); } .cann-grid, .seasonal-grid { grid-template-columns: 1fr; } }
-</style>
-</head>
-<body>
+}
 
-<div class="header">
-  <div class="header-logo">
-    <div class="logo-icon" style="font-size:16px;font-weight:bold;color:var(--gold-lt);">RK</div>
-    <div class="logo-text">
-      <h1>RUDRAKAILASH AGENTIC SEO</h1>
-      <p>Competitor Gap · Serper AI · E-E-A-T · Schema · SGE · Rank Tracker</p>
-    </div>
-  </div>
-  <div class="header-actions">
-    <span id="connectionStatus" class="text-muted"><span class="status-dot" id="statusDot"></span>Not connected</span>
-    <button class="btn btn-secondary btn-sm" onclick="connectShopify()" id="connectBtn">Connect</button>
-    <button class="btn btn-secondary btn-sm" onclick="loadProducts()" id="refreshBtn" style="display:none">↻ Refresh</button>
-  </div>
-</div>
+async function loadKeywordsAsync() {
+  if (await ensureRankSchema()) {
+    try {
+      const [rows] = await dbPool.query("SELECT * FROM rk_rank_keywords");
+      const out = {};
+      for (const r of rows) {
+        out[r.product_id] = { productId: r.product_id, productTitle: r.product_title, keyword: r.keyword, isCustom: !!r.is_custom, addedAt: r.added_at };
+      }
+      return out;
+    } catch (e) { console.error("❌ MySQL loadKeywords failed, falling back to JSON file:", e.message); }
+  }
+  return loadKeywords();
+}
 
-<div class="tabs">
-  <div class="tab active" onclick="switchTab('seo')"      id="tab-seo">SEO OPTIMISER</div>
-  <div class="tab"        onclick="switchTab('rank')"     id="tab-rank">RANK TRACKER</div>
-  <div class="tab"        onclick="switchTab('cann')"     id="tab-cann">CANNIBALIZATION</div>
-  <div class="tab"        onclick="switchTab('priority')" id="tab-priority">PRIORITISE</div>
-  <div class="tab"        onclick="switchTab('options')"  id="tab-options">OPTIONS</div>
-</div>
+async function saveKeywordEntryAsync(entry) {
+  if (await ensureRankSchema()) {
+    try {
+      await dbPool.query(
+        `INSERT INTO rk_rank_keywords (product_id, product_title, keyword, is_custom, added_at)
+         VALUES (?,?,?,?,?)
+         ON DUPLICATE KEY UPDATE product_title=VALUES(product_title), keyword=VALUES(keyword), is_custom=VALUES(is_custom)`,
+        [String(entry.productId), entry.productTitle, entry.keyword, entry.isCustom ? 1 : 0, new Date(entry.addedAt || Date.now())]
+      );
+      return true;
+    } catch (e) { console.error("❌ MySQL saveKeyword failed, falling back to JSON file:", e.message); }
+  }
+  const keywords = loadKeywords();
+  keywords[entry.productId] = entry;
+  saveKeywords(keywords);
+  return false;
+}
 
-<div id="pane-seo" class="main">
-  <div id="connectPrompt" class="connect-panel">
-    <div style="font-size:48px;margin-bottom:16px;color:var(--gold-lt);font-weight:bold;">RK</div>
-    <h2>RudraKailash SEO Agent</h2>
-    <p>Connect your Shopify store to begin AI-powered SEO optimisation with competitor gap analysis, JSON-LD schema, SGE citation scoring, and rank tracking.</p>
-    <button class="btn btn-primary" onclick="connectShopify()">Connect Shopify Store</button>
-  </div>
+async function deleteKeywordAsync(productId) {
+  if (await ensureRankSchema()) {
+    try { await dbPool.query("DELETE FROM rk_rank_keywords WHERE product_id=?", [String(productId)]); return true; }
+    catch (e) { console.error("❌ MySQL deleteKeyword failed, falling back to JSON file:", e.message); }
+  }
+  const keywords = loadKeywords();
+  delete keywords[productId];
+  saveKeywords(keywords);
+  return false;
+}
 
-  <div id="mainUI" class="hidden">
-    <div class="card">
-      <div class="card-title">Select Product</div>
-      <div class="product-row">
-        <select class="product-select" id="productSelect" onchange="onProductChange()" style="flex:1">
-          <option value="">— Loading products… —</option>
-        </select>
-        <span id="thinBadge" class="thin-badge" style="display:none"></span>
-        <span id="serviceBadge" class="service-badge hidden">🛕 Service</span>
-        <span id="karungaliBadge" class="service-badge hidden" style="background:#0A1A0A;color:#7FD48A;border-color:#2A5A2A;">🪵 Karungali Wood</span>
-        <span id="sphatikBadge" class="service-badge hidden" style="background:#0A1A2A;color:#80C0F0;border-color:#1A4A6A;">💎 Sphatik Crystal</span>
-        <span id="tulsiBadge" class="service-badge hidden" style="background:#0A1A0A;color:#A0D080;border-color:#2A5A2A;">🌿 Tulsi (no auth. method)</span>
-        <span id="originBadge" class="service-badge hidden" style="background:#1A0A2A;color:#D090F0;border-color:#4A2A6A;"></span>
-        <button class="btn btn-primary" onclick="runAllAgents()" id="runBtn" disabled>▶ Run AI SEO Agents</button>
-      </div>
-      <div class="flex mt-8" style="gap:8px;flex-wrap:wrap">
-        <button class="btn btn-secondary btn-sm" onclick="previewQuickSpecs()" id="previewSpecsBtn" disabled>📋 Preview Quick Specs + Pricing</button>
-        <button class="btn btn-secondary btn-sm" onclick="pushQuickSpecs()" id="pushSpecsBtn" disabled>⚡ Push Quick Specs Only (non-destructive)</button>
-        <span class="text-muted" style="font-size:11px">Builds live price/stock/spec tables from Shopify data and inserts them into the existing description — doesn't touch or regenerate the rest of the page.</span>
-      </div>
-      <div id="quickSpecsPreview" class="quick-specs-preview-wrap hidden"></div>
-      <div id="thinWarning" class="alert alert-warn mt-8 hidden">⚠ Thin content detected — this product has a very short or missing description.</div>
-      <div id="originWarning" class="alert alert-warn mt-8 hidden">⚠ No verified origin mapping found for this product — the AI agents will omit origin claims rather than guess. If this product should have a known origin, flag it so the origin table can be updated.</div>
-      <div id="notStockedWarning" class="alert alert-warn mt-8 hidden">⚠ This mukhi count in mala form is flagged as not currently stocked (per Subbu, July 2026). Double-check before generating content for this product.</div>
-    </div>
+async function loadRankDataAsync() {
+  if (await ensureRankSchema()) {
+    try {
+      const [kwRows]   = await dbPool.query("SELECT * FROM rk_rank_keywords");
+      const [histRows] = await dbPool.query("SELECT * FROM rk_rank_history ORDER BY check_date ASC");
+      const out = {};
+      for (const k of kwRows) out[k.product_id] = { productId: k.product_id, productTitle: k.product_title, keyword: k.keyword, history: [] };
+      for (const h of histRows) {
+        if (!out[h.product_id]) out[h.product_id] = { productId: h.product_id, productTitle: "", keyword: "", history: [] };
+        const dateStr = h.check_date instanceof Date ? h.check_date.toISOString().split("T")[0] : String(h.check_date);
+        out[h.product_id].history.push({ date: dateStr, posIN: h.pos_in, posGlobal: h.pos_global, checkedAt: h.checked_at });
+      }
+      for (const id of Object.keys(out)) {
+        const hist = out[id].history;
+        const latest = hist[hist.length - 1];
+        out[id].lastChecked  = latest ? latest.checkedAt : null;
+        out[id].latestIN     = latest ? latest.posIN     : null;
+        out[id].latestGlobal = latest ? latest.posGlobal : null;
+      }
+      return out;
+    } catch (e) { console.error("❌ MySQL loadRankData failed, falling back to JSON file:", e.message); }
+  }
+  return loadRankData();
+}
 
-    <div class="card">
-      <div class="card-title">📝 Custom Promotional Block <span style="text-transform:none;letter-spacing:0;font-size:11px">— your own text, inserted before FAQ, non-destructive</span></div>
-      <div class="text-muted" style="font-size:12px;margin-bottom:14px">Good for seasonal pushes — e.g. a Raksha Bandhan gifting note. Add now, remove later; several can be active at once, each tracked by its own label.</div>
-      <div class="content-section">
-        <div class="section-label">LABEL (used to manage this block later — e.g. "raksha-bandhan-2026")</div>
-        <input type="text" id="customBlockLabel" class="content-box editable" style="padding:10px 12px" placeholder="e.g. raksha-bandhan-2026"/>
-      </div>
-      <div class="content-section">
-        <div class="section-label">OPTIONAL HEADING</div>
-        <input type="text" id="customBlockHeading" class="content-box editable" style="padding:10px 12px" placeholder="e.g. A Modern Raksha Bandhan Gift"/>
-      </div>
-      <div class="content-section">
-        <div class="section-label">YOUR TEXT</div>
-        <textarea id="customBlockText" class="content-box editable" rows="4" placeholder="Write a few sentences here — separate paragraphs with a blank line."></textarea>
-      </div>
-      <div class="flex" style="gap:8px">
-        <button class="btn btn-primary btn-sm" onclick="pushCustomBlock()" id="pushCustomBlockBtn" disabled>➕ Push Custom Block</button>
-        <button class="btn btn-secondary btn-sm" onclick="loadCustomBlocks()" id="refreshCustomBlocksBtn" disabled>↻ Refresh Active Blocks</button>
-      </div>
-      <div id="customBlocksList" class="mt-16"></div>
-    </div>
+// Returns true if the check was written to MySQL, false if the caller should
+// fall back to the JSON-file write path (mirrors the original inline logic
+// in checkAndStoreRank below).
+async function saveRankCheckAsync(productId, today, posIN, posGlobal) {
+  if (await ensureRankSchema()) {
+    try {
+      await dbPool.query(
+        `INSERT INTO rk_rank_history (product_id, check_date, pos_in, pos_global, checked_at)
+         VALUES (?,?,?,?,NOW())
+         ON DUPLICATE KEY UPDATE pos_in=VALUES(pos_in), pos_global=VALUES(pos_global), checked_at=NOW()`,
+        [String(productId), today, posIN, posGlobal]
+      );
+      return true;
+    } catch (e) { console.error("❌ MySQL saveRankCheck failed, falling back to JSON file:", e.message); }
+  }
+  return false;
+}
+// ═══════════════════════════════════════════════════════════════════════════
 
-    <div class="card hidden" id="compSection">
-      <div class="flex-between">
-        <div class="card-title" style="margin:0">🔍 Competitor Research — Top Ranking Pages</div>
-        <span class="text-muted" id="compCount"></span>
-      </div>
-      <div id="compList" class="mt-8"></div>
-      <div id="kwSection" class="hidden mt-8">
-        <div class="flex-between" style="margin-bottom:8px">
-          <div class="card-title" style="margin:0">🎯 Keywords Extracted from Competitors</div>
-          <div style="display:flex;gap:0">
-            <span class="kw-legend"><span class="kw-tag-h1" style="padding:1px 6px;font-size:10px">H1</span> Primary</span>
-            <span class="kw-legend"><span class="kw-tag-h2h3" style="padding:1px 6px;font-size:10px">H2/H3</span> Sub-topics</span>
-            <span class="kw-legend"><span class="kw-tag-phrase" style="padding:1px 6px;font-size:10px">phrase</span> Long-tail</span>
-          </div>
-        </div>
-        <div id="kwTags"></div>
-      </div>
-      <div id="gapSection" class="hidden mt-8">
-        <div class="card-title" style="margin-bottom:8px">Content Gaps Identified</div>
-        <div id="gapTags"></div>
-      </div>
-    </div>
+function loadCitationQueries() {
+  try {
+    if (fs.existsSync(CITATION_QUERIES_FILE)) return JSON.parse(fs.readFileSync(CITATION_QUERIES_FILE, "utf8"));
+  } catch (e) { console.warn("⚠️  Citation queries load error:", e.message); }
+  return {};
+}
 
-    <div class="card hidden" id="scoreSection">
-      <div class="card-title">SEO Score — Before vs After</div>
-      <div class="score-display">
-        <div>
-          <div class="score-label">BEFORE</div>
-          <div class="score-num" id="scoreBefore">—</div>
-          <div id="scoreBeforeBar" class="progress-bar" style="width:120px"><div class="progress-fill" style="background:var(--red);width:0%"></div></div>
-        </div>
-        <div class="score-arrow">→</div>
-        <div>
-          <div class="score-label">AFTER</div>
-          <div class="score-num" id="scoreAfter">—</div>
-          <div id="scoreAfterBar" class="progress-bar" style="width:120px"><div class="progress-fill" style="background:var(--green);width:0%"></div></div>
-        </div>
-        <div>
-          <div id="scoreImprovement" style="font-size:22px;font-weight:bold;color:var(--gold-lt)"></div>
-          <div class="score-label" id="scoreReadiness"></div>
-        </div>
-        <div class="sge-score-wrap hidden" id="sgeScoreWrap">
-          <div class="score-label">SGE CITATION SCORE</div>
-          <div class="sge-score-num" id="sgeScoreNum">—</div>
-          <div class="sge-score-label">AI ANSWER READINESS</div>
-        </div>
-      </div>
-      <div class="agent-grid" id="agentGrid">
-        <div class="agent-card" id="agent-research"><div class="agent-icon">🔍</div><div class="agent-name">COMPETITOR RESEARCH</div><div class="agent-status text-muted">Waiting…</div></div>
-        <div class="agent-card" id="agent-keywords"><div class="agent-icon">🎯</div><div class="agent-name">KEYWORD EXTRACTION</div><div class="agent-status text-muted">Waiting…</div></div>
-        <div class="agent-card" id="agent-gaps"><div class="agent-icon">📊</div><div class="agent-name">GAP ANALYSIS</div><div class="agent-status text-muted">Waiting…</div></div>
-        <div class="agent-card" id="agent-desc"><div class="agent-icon">✍️</div><div class="agent-name">DESCRIPTION</div><div class="agent-status text-muted">Waiting…</div></div>
-        <div class="agent-card" id="agent-title"><div class="agent-icon">🏷️</div><div class="agent-name">META TITLE</div><div class="agent-status text-muted">Waiting…</div></div>
-        <div class="agent-card" id="agent-metadesc"><div class="agent-icon">📝</div><div class="agent-name">META DESCRIPTION</div><div class="agent-status text-muted">Waiting…</div></div>
-        <div class="agent-card" id="agent-tags"><div class="agent-icon">🔖</div><div class="agent-name">TAGS</div><div class="agent-status text-muted">Waiting…</div></div>
-        <div class="agent-card" id="agent-faq"><div class="agent-icon">🎙️</div><div class="agent-name">FAQ / VOICE</div><div class="agent-status text-muted">Waiting…</div></div>
-        <div class="agent-card" id="agent-schema"><div class="agent-icon">🧬</div><div class="agent-name">JSON-LD SCHEMA</div><div class="agent-status text-muted">Waiting…</div></div>
-      </div>
-    </div>
+function saveCitationQueries(data) {
+  try { fs.writeFileSync(CITATION_QUERIES_FILE, JSON.stringify(data, null, 2), "utf8"); }
+  catch (e) { console.warn("⚠️  Citation queries save error:", e.message); }
+}
 
-    <div id="resultsSection" class="hidden">
-      <div class="card">
-        <div class="card-title">🏷 Meta Title</div>
-        <div class="content-section">
-          <div class="section-label">CURRENT <span class="section-tag tag-current">existing</span></div>
-          <div class="content-box" id="currentMetaTitle">—</div>
-        </div>
-        <div class="content-section">
-          <div class="section-label">AI SUGGESTION <span class="section-tag tag-new">optimised</span></div>
-          <textarea class="content-box editable" id="newMetaTitle" rows="2" oninput="updateCharCount('newMetaTitle','metaTitleCount')"></textarea>
-          <div class="char-count"><span id="metaTitleCount">0</span> characters (ideal: 40–60)</div>
-        </div>
-      </div>
+function loadCitationData() {
+  try {
+    if (fs.existsSync(CITATION_DATA_FILE)) return JSON.parse(fs.readFileSync(CITATION_DATA_FILE, "utf8"));
+  } catch (e) { console.warn("⚠️  Citation data load error:", e.message); }
+  return {};
+}
 
-      <div class="card">
-        <div class="card-title">📝 Meta Description</div>
-        <div class="content-section">
-          <div class="section-label">CURRENT <span class="section-tag tag-current">existing</span></div>
-          <div class="content-box" id="currentMetaDesc">—</div>
-        </div>
-        <div class="content-section">
-          <div class="section-label">AI SUGGESTION <span class="section-tag tag-new">optimised</span></div>
-          <textarea class="content-box editable" id="newMetaDesc" rows="3" oninput="updateCharCount('newMetaDesc','metaDescCount')"></textarea>
-          <div class="char-count"><span id="metaDescCount">0</span> characters (ideal: 145–155)</div>
-        </div>
-      </div>
+function saveCitationData(data) {
+  try { fs.writeFileSync(CITATION_DATA_FILE, JSON.stringify(data, null, 2), "utf8"); }
+  catch (e) { console.warn("⚠️  Citation data save error:", e.message); }
+}
 
-      <div class="card">
-        <div class="card-title">🔖 Product Tags</div>
-        <div class="content-section">
-          <div class="section-label">CURRENT <span class="section-tag tag-current">existing</span></div>
-          <div class="tags-wrap" id="currentTags"></div>
-        </div>
-        <div class="content-section mt-8">
-          <div class="section-label">AI SUGGESTION <span class="section-tag tag-new">optimised</span></div>
-          <div class="tags-wrap" id="newTagsDisplay"></div>
-          <textarea class="content-box editable mt-8" id="newTags" rows="2" oninput="renderNewTags()"></textarea>
-        </div>
-      </div>
+const SHOPIFY_CLIENT_ID     = process.env.SHOPIFY_CLIENT_ID;
+const SHOPIFY_CLIENT_SECRET = process.env.SHOPIFY_CLIENT_SECRET;
+const SHOPIFY_STORE_DOMAIN  = process.env.SHOPIFY_STORE_DOMAIN;
+const SHOPIFY_API_VERSION   = "2024-01";
+const APP_URL               = process.env.APP_URL || "https://rk-seo-proxy.onrender.com";
+const STORE_DOMAIN_SHORT    = "rudrakailash.com";
 
-      <div class="card">
-        <div class="card-title">📄 Product Description</div>
-        <div class="alert alert-info" id="eeAtBadge">✦ E-E-A-T compliant · Feb 2026 Google update</div>
-        <div class="content-section">
-          <div class="section-label">AI REWRITTEN — RENDERED PREVIEW <span class="section-tag tag-new">optimised</span></div>
-          <div class="desc-preview" id="descPreview"></div>
-          <textarea class="content-box editable mt-8" id="newDesc" rows="10" style="display:none"></textarea>
-          <div class="flex mt-8" style="gap:8px">
-            <button class="btn btn-secondary btn-sm" onclick="toggleDescEdit()">✎ Edit HTML</button>
-            <button class="btn btn-secondary btn-sm" onclick="toggleDescPreview()">👁 Preview</button>
-          </div>
-        </div>
-      </div>
+let storedAccessToken = loadToken();
+const pendingApprovals = new Map();
 
-      <div class="card" id="faqCard">
-        <div class="flex-between" style="margin-bottom:14px">
-          <div class="card-title" style="margin:0">🎙️ FAQ &amp; Voice Search Queries</div>
-          <span class="alert alert-purple" style="padding:4px 10px;font-size:11px;margin:0">SGE &amp; Featured Snippet Ready</span>
-        </div>
-        <div id="faqDisplay"></div>
-        <div class="mt-16">
-          <div class="section-label">FAQ HTML — COPY TO PRODUCT PAGE <span class="section-tag tag-new">ready to paste</span></div>
-          <div class="jsonld-wrap" style="border-color:#2A2A6A;background:#050510">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-              <span style="font-size:10px;color:#6080C0;letter-spacing:1px">FAQ HTML BLOCK</span>
-              <button class="copy-btn" style="background:#1A1A4A;color:var(--purple);border-color:#3A3A7A" onclick="copyToClipboard('faqHtmlCode')">Copy HTML</button>
-            </div>
-            <div class="jsonld-code" id="faqHtmlCode" style="color:#AAAAFF"></div>
-          </div>
-        </div>
-      </div>
+function generateApprovalToken() {
+  return Math.random().toString(36).substring(2) + Date.now().toString(36);
+}
 
-      <div class="card" id="sgeCard">
-        <div class="flex-between" style="margin-bottom:14px">
-          <div class="card-title" style="margin:0">🤖 SGE Citation-Readiness Analysis</div>
-          <span id="sgeBadge" class="section-tag" style="font-size:11px;padding:3px 10px"></span>
-        </div>
-        <div class="alert alert-info" style="margin-bottom:12px;font-size:12px">✦ Google SGE &amp; ChatGPT cite pages with self-contained, factual, authoritative passages.</div>
-        <div id="sgePassageList" class="sge-passages"></div>
-        <div class="mt-16" id="sgeSuggestionsWrap">
-          <div class="card-title" style="margin-bottom:8px">HOW TO IMPROVE YOUR SGE SCORE</div>
-          <div id="sgeSuggestions" style="font-size:12px;color:var(--muted);line-height:1.8"></div>
-        </div>
-      </div>
+app.use(cors({
+  origin: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Store-Domain", "X-Access-Token"],
+  credentials: true,
+}));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-      <div class="card" id="schemaCard">
-        <div class="flex-between" style="margin-bottom:14px">
-          <div class="card-title" style="margin:0">🧬 FAQ Schema — Ready for Schema Plus</div>
-          <span style="font-size:11px;color:var(--green)">FAQPage Rich Result · Google Search · SGE</span>
-        </div>
-        <div class="alert alert-success" style="margin-bottom:12px;font-size:12px">
-          ✦ <strong>Option A — Manual:</strong> Schema Plus → FAQ tab → search for <strong id="schemaProductTitle" style="color:var(--gold-lt)">this product</strong> → paste Q&amp;A pairs.<br>
-          ✦ <strong>Option B — Bulk CSV:</strong> Download CSV below and use Schema Plus "Upload CSV".
-        </div>
-        <div id="schemaPairsDisplay" style="margin-bottom:16px"></div>
-        <div style="padding:14px 16px;background:var(--surface2);border:1px solid var(--border2);border-radius:8px">
-          <div class="flex-between">
-            <div>
-              <div style="font-size:12px;color:var(--cream);margin-bottom:3px">📥 Bulk Upload CSV</div>
-              <div style="font-size:11px;color:var(--muted)">Ready-to-upload CSV for Schema Plus bulk import</div>
-            </div>
-            <button class="btn btn-secondary btn-sm" onclick="downloadFaqCsv()" style="white-space:nowrap">⬇ Download CSV</button>
-          </div>
-        </div>
-      </div>
+if (auditModule && typeof auditModule.register === "function") {
+  auditModule.register(app);
+  console.log("✅ Audit routes registered");
+} else {
+  console.warn("⚠️  Audit routes not registered — /audit endpoint unavailable");
+}
 
-      <div class="flex-between" style="margin-top:8px">
-        <button class="btn btn-secondary" onclick="resetUI()">← Regenerate</button>
-        <button class="btn btn-primary" onclick="pushToShopify()" id="pushBtn">🚀 Push to Shopify</button>
-      </div>
-    </div>
-  </div>
-</div>
+app.get("/seo", (req, res) => {
+  res.sendFile(path.join(__dirname, "rk-seo-v8.html"));
+});
 
-<div id="pane-rank" class="main hidden">
-  <div class="flex-between" style="margin-bottom:20px">
-    <div>
-      <div class="text-gold" style="font-size:16px;margin-bottom:4px">📊 Google Rank Tracker</div>
-      <div class="text-muted">Daily checks at 6am IST · Google India + Global · Top 100 <span id="rankStorageBadge"></span></div>
-    </div>
-    <div class="flex">
-      <button class="btn btn-secondary btn-sm" onclick="loadRankData()">↻ Refresh</button>
-      <button class="btn btn-primary btn-sm" onclick="triggerAllChecks()">▶ Check All Now</button>
-    </div>
-  </div>
-  <div class="rank-grid">
-    <div class="rank-stat"><div class="rank-stat-num" style="color:var(--gold-lt)" id="statTracked">—</div><div class="rank-stat-label">TRACKED</div></div>
-    <div class="rank-stat"><div class="rank-stat-num" style="color:var(--green)"   id="statTop10">—</div><div class="rank-stat-label">TOP 10 (IN)</div></div>
-    <div class="rank-stat"><div class="rank-stat-num" style="color:var(--blue)"    id="statTop50">—</div><div class="rank-stat-label">TOP 50 (IN)</div></div>
-    <div class="rank-stat"><div class="rank-stat-num" style="color:var(--red)"     id="statNotFound">—</div><div class="rank-stat-label">NOT RANKED</div></div>
-  </div>
-  <div class="card" style="padding:0;overflow:hidden">
-    <table class="rank-table">
-      <thead><tr><th>PRODUCT</th><th>KEYWORD</th><th>GOOGLE.CO.IN</th><th>GOOGLE.COM</th><th>7-DAY TREND</th><th>LAST CHECKED</th><th>ACTIONS</th></tr></thead>
-      <tbody id="rankTableBody"><tr><td colspan="7" style="text-align:center;padding:40px;color:var(--muted)">Loading rank data…</td></tr></tbody>
-    </table>
-  </div>
-  <div class="chart-container" id="chartSection" style="display:none">
-    <div class="flex-between" style="margin-bottom:12px">
-      <div class="text-gold" id="chartTitle" style="font-size:14px"></div>
-      <button class="btn btn-secondary btn-sm" onclick="hideChart()">✕ Close</button>
-    </div>
-    <canvas id="rankChart"></canvas>
-  </div>
-</div>
+const transporter = nodemailer.createTransport({
+  host:   process.env.EMAIL_SMTP_HOST || "smtp.hostinger.com",
+  port:   parseInt(process.env.EMAIL_SMTP_PORT || "465"),
+  secure: true,
+  auth: { user: process.env.EMAIL_SMTP_USER, pass: process.env.EMAIL_SMTP_PASS },
+});
 
-<div id="pane-cann" class="main hidden">
-  <div class="flex-between" style="margin-bottom:20px">
-    <div>
-      <div class="text-gold" style="font-size:16px;margin-bottom:4px">🔍 Keyword Cannibalization Checker</div>
-      <div class="text-muted">Detect product pages competing against each other in Google</div>
-    </div>
-    <button class="btn btn-primary" onclick="runCannibalizationCheck()" id="cannBtn">▶ Analyse All Products</button>
-  </div>
-  <div class="cann-grid" id="cannStats" style="display:none">
-    <div class="cann-stat"><div class="cann-stat-num" style="color:var(--gold-lt)" id="cannStatProducts">—</div><div class="rank-stat-label">PRODUCTS ANALYSED</div></div>
-    <div class="cann-stat"><div class="cann-stat-num" style="color:var(--red)"     id="cannStatConflicts">—</div><div class="rank-stat-label">CONFLICTS FOUND</div></div>
-    <div class="cann-stat"><div class="cann-stat-num" style="color:var(--orange)"  id="cannStatAffected">—</div><div class="rank-stat-label">AFFECTED PRODUCTS</div></div>
-  </div>
-  <div id="cannResults">
-    <div class="cann-empty">
-      <div style="font-size:48px;margin-bottom:16px">🔍</div>
-      <div style="color:var(--muted);font-size:14px">Click "Analyse All Products" to detect keyword conflicts</div>
-    </div>
-  </div>
-</div>
+async function sendEmail(subject, htmlBody) {
+  try {
+    await transporter.sendMail({
+      from: `"RudraKailash SEO Agent" <${process.env.EMAIL_FROM}>`,
+      to:   process.env.EMAIL_TO,
+      subject, html: htmlBody,
+    });
+    console.log(`📧 Email sent: ${subject}`);
+  } catch (e) { console.error("❌ Email failed:", e.message); }
+}
 
-<div id="pane-priority" class="main hidden">
-  <div class="flex-between" style="margin-bottom:20px">
-    <div>
-      <div class="text-gold" style="font-size:16px;margin-bottom:4px">🎯 SEO Rollout Prioritiser</div>
-      <div class="text-muted">Identifies which products to optimise next — ranked by opportunity</div>
-    </div>
-    <button class="btn btn-primary" onclick="runPrioritiser()" id="priorityBtn">▶ Generate Priority List</button>
-  </div>
-  <div id="priorityStats" style="display:none;margin-bottom:20px">
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
-      <div class="rank-stat"><div class="rank-stat-num" style="color:var(--red)"    id="pStatHot">—</div><div class="rank-stat-label">🔴 DO NOW</div></div>
-      <div class="rank-stat"><div class="rank-stat-num" style="color:var(--orange)" id="pStatWarm">—</div><div class="rank-stat-label">🟠 THIS WEEK</div></div>
-      <div class="rank-stat"><div class="rank-stat-num" style="color:var(--green)"  id="pStatCool">—</div><div class="rank-stat-label">🟢 NEXT WEEK</div></div>
-      <div class="rank-stat"><div class="rank-stat-num" style="color:var(--muted)"  id="pStatDone">—</div><div class="rank-stat-label">✅ ALREADY DONE</div></div>
-    </div>
-    <div class="alert alert-info mt-8" style="font-size:12px">✦ <strong>Recommended pace:</strong> 5–8 products per week to avoid triggering a site-wide content reset signal to Google.</div>
-  </div>
-  <div id="priorityResults">
-    <div style="text-align:center;padding:60px;color:var(--muted)">
-      <div style="font-size:48px;margin-bottom:16px">🎯</div>
-      <div style="font-size:14px">Click "Generate Priority List" to analyse your products</div>
-    </div>
-  </div>
-</div>
+app.get("/", (req, res) => {
+  const rankData     = loadRankData();
+  const keywords     = loadKeywords();
+  const trackedCount = Object.keys(keywords).length;
+  res.json({
+    status: "ok", service: "RudraKailash SEO Proxy", store: SHOPIFY_STORE_DOMAIN,
+    tokenConfigured:        !!storedAccessToken,
+    anthropicKeyConfigured: !!process.env.ANTHROPIC_API_KEY,
+    serperConfigured:       !!process.env.SERPER_API_KEY,
+    emailConfigured:        !!(process.env.EMAIL_SMTP_USER && process.env.EMAIL_SMTP_PASS),
+    auditModuleLoaded:      !!auditModule,
+    rankTracking: {
+      trackedProducts: trackedCount,
+      dataPoints: Object.values(rankData).reduce((s, p) => s + (p.history?.length || 0), 0),
+    },
+    pendingApprovals: pendingApprovals.size,
+  });
+});
 
-<div id="pane-options" class="main hidden">
-  <div class="card">
-    <div class="card-title">Proxy Server</div>
-    <div class="flex">
-      <input type="text" id="proxyUrl" value="https://rk-seo-proxy.onrender.com" class="keyword-input" style="width:360px"/>
-      <button class="btn btn-secondary btn-sm" onclick="saveOptions()">Save</button>
-      <button class="btn btn-secondary btn-sm" onclick="testConnection()">Test Connection</button>
-    </div>
-    <div id="optionsMsg" class="mt-8 text-muted" style="font-size:12px"></div>
-  </div>
-  <div class="card">
-    <div class="card-title">Manual Triggers</div>
-    <div class="flex" style="gap:12px;flex-wrap:wrap">
-      <button class="btn btn-secondary" onclick="triggerCron()">⏰ Trigger Weekly SEO Cron</button>
-      <button class="btn btn-secondary" onclick="triggerAllChecks()">📊 Trigger All Rank Checks</button>
-    </div>
-    <p class="text-muted mt-8" style="font-size:12px">Weekly SEO cron: Sunday 11pm IST · Daily rank check: 6am IST · Weekly rank report: Monday 7am IST</p>
-  </div>
-  <div class="card">
-    <div class="card-title">🪔 Seasonal SEO Opportunities — Hindu Calendar 2026</div>
-    <div class="alert alert-warn" style="margin-bottom:16px;font-size:12px">✦ Plan content and SEO pushes 2–3 weeks before each festival.</div>
-    <div class="seasonal-grid" id="seasonalGrid"></div>
-  </div>
-</div>
+app.get("/auth/install", (req, res) => {
+  const scopes      = "read_products,write_products,read_product_listings";
+  const redirectUri = `${APP_URL}/auth/callback`;
+  const state       = Math.random().toString(36).substring(7);
+  res.redirect(`https://${SHOPIFY_STORE_DOMAIN}/admin/oauth/authorize?client_id=${SHOPIFY_CLIENT_ID}&scope=${scopes}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`);
+});
 
-<script>
-// ─── State ────────────────────────────────────────────────────────────────────
-const DEFAULT_PROXY = "https://rk-seo-proxy.onrender.com";
-let PROXY_URL = (localStorage.getItem("rk_proxy_url") || "").trim();
-if (!PROXY_URL || PROXY_URL === "undefined" || PROXY_URL === "null") PROXY_URL = DEFAULT_PROXY;
-let products = [], selectedProduct = null, isConnected = false;
-let rankChart = null, rankDataCache = {}, keywordsCache = {};
-let generatedFAQs = [];
+app.get("/auth/callback", async (req, res) => {
+  const { code, shop } = req.query;
+  if (!code || !shop) return res.status(400).json({ error: "Missing code or shop" });
+  try {
+    const tokenRes  = await fetch(`https://${shop}/admin/oauth/access_token`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ client_id: SHOPIFY_CLIENT_ID, client_secret: SHOPIFY_CLIENT_SECRET, code }),
+    });
+    const tokenData = await tokenRes.json();
+    if (tokenData.access_token) {
+      storedAccessToken = tokenData.access_token;
+      saveToken(storedAccessToken);
+      await registerWebhooks();
+      res.send(`<html><body style="font-family:sans-serif;background:#0D0500;color:#F5E6C8;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;"><div style="text-align:center;padding:40px;border:1px solid #D4A017;border-radius:12px;background:#1A0A00;"><div style="font-size:48px;margin-bottom:16px;">✅</div><h2 style="color:#F0C84A;margin-bottom:8px;">Connected!</h2><p style="color:#9A7050;">Store linked · Token saved · Webhooks registered · Rank tracking active</p></div></body></html>`);
+    } else res.status(400).json({ error: "Failed to get access token", details: tokenData });
+  } catch (err) { res.status(500).json({ error: "OAuth failed", message: err.message }); }
+});
+
+app.get("/auth/status", (req, res) => {
+  res.json({
+    connected: !!storedAccessToken, store: SHOPIFY_STORE_DOMAIN,
+    tokenSource: fs.existsSync(TOKEN_FILE) ? "disk" : (process.env.SHOPIFY_ACCESS_TOKEN ? "env" : "memory"),
+  });
+});
+
+app.get("/auth/token", (req, res) => {
+  if (req.query.secret !== SHOPIFY_CLIENT_SECRET) return res.status(403).json({ error: "Forbidden" });
+  if (!storedAccessToken) return res.status(404).json({ error: "No token" });
+  res.json({ token: storedAccessToken });
+});
+
+app.get("/products", async (req, res) => {
+  if (!storedAccessToken) return res.status(401).json({ error: "Not authenticated" });
+  try {
+    const shopifyRes = await fetch(
+      `https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products.json?limit=250&fields=id,title,body_html,tags,handle,status,metafields_global_title_tag,metafields_global_description_tag`,
+      { headers: { "X-Shopify-Access-Token": storedAccessToken } }
+    );
+    const data = await shopifyRes.json();
+    if (!shopifyRes.ok) return res.status(shopifyRes.status).json({ error: "Shopify error", details: data });
+    res.json(data);
+  } catch (err) { res.status(500).json({ error: "Failed to fetch products", message: err.message }); }
+});
+
+app.put("/products/:id", async (req, res) => {
+  if (!storedAccessToken) return res.status(401).json({ error: "Not authenticated" });
+  const { id } = req.params;
+  try {
+    const shopifyRes = await fetch(
+      `https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${id}.json`,
+      {
+        method: "PUT",
+        headers: { "X-Shopify-Access-Token": storedAccessToken, "Content-Type": "application/json" },
+        body: JSON.stringify({ product: { id, ...req.body } }),
+      }
+    );
+    const data = await shopifyRes.json();
+    if (!shopifyRes.ok) return res.status(shopifyRes.status).json({ error: "Update failed", details: data });
+    res.json({ success: true, product: data.product });
+  } catch (err) { res.status(500).json({ error: "Failed to update product", message: err.message }); }
+});
+
+// ─── Non-destructive Quick Specs + Pricing/Availability push ───────────────
+// Unlike PUT /products/:id (used by the full RSA v8 pipeline, which replaces
+// body_html entirely with newly AI-generated content), this route does NOT
+// call Haiku at all. It fetches the product's CURRENT live body_html fresh
+// from Shopify, builds the two deterministic tables from real variant data,
+// upserts them into a marked block (see upsertGeneratedBlocks above), and
+// pushes back only that modified body_html — every existing word on the page
+// (hand-written, AI-written, whatever's there) is left exactly as-is.
+// Safe to re-run any time price/stock changes — it replaces its own marked
+// block only, never duplicates it.
+app.post("/products/:id/quick-specs", async (req, res) => {
+  if (!storedAccessToken) return res.status(401).json({ error: "Not authenticated" });
+  const { id } = req.params;
+  try {
+    const productRes = await fetch(
+      `https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${id}.json?fields=id,title,body_html,tags,handle,status,variants`,
+      { headers: { "X-Shopify-Access-Token": storedAccessToken } }
+    );
+    const productData = await productRes.json();
+    if (!productRes.ok || !productData.product) {
+      console.error(`❌ Quick Specs push (${id}): product fetch failed —`, JSON.stringify(productData).slice(0, 500));
+      return res.status(productRes.status || 404).json({ error: "Product fetch failed", details: productData });
+    }
+    const product = productData.product;
+
+    const isService = isServiceProduct(product);
+    if (isService) {
+      console.warn(`⚠️  Quick Specs push (${id}): rejected — "${product.title}" detected as a service product`);
+      return res.status(400).json({ error: "Quick Specs tables are for physical products, not services — this product was detected as a Puja/Homa service." });
+    }
+
+    const quickSpecsHtml = buildQuickSpecsTable(product);
+    const pricingHtml    = buildPricingAvailabilityTable(product);
+    const updatedBodyHtml = upsertGeneratedBlocks(product.body_html, quickSpecsHtml, pricingHtml);
+
+    const pushRes = await fetch(
+      `https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${id}.json`,
+      { method: "PUT", headers: { "X-Shopify-Access-Token": storedAccessToken, "Content-Type": "application/json" }, body: JSON.stringify({ product: { id, body_html: updatedBodyHtml } }) }
+    );
+    const pushData = await pushRes.json();
+    if (!pushRes.ok) {
+      console.error(`❌ Quick Specs push (${id}, "${product.title}"): Shopify PUT failed (status ${pushRes.status}) —`, JSON.stringify(pushData).slice(0, 800));
+      return res.status(pushRes.status).json({ error: "Push failed", details: pushData });
+    }
+
+    console.log(`✅ Quick Specs pushed for "${product.title}" (${id})`);
+    res.json({ success: true, quickSpecsHtml, pricingHtml, bodyHtmlPreview: updatedBodyHtml });
+  } catch (err) {
+    console.error(`❌ Quick Specs push (${id}) threw an exception:`, err.message, err.stack ? "\n" + err.stack.slice(0, 500) : "");
+    res.status(500).json({ error: "Quick Specs push failed", message: err.message });
+  }
+});
+
+// Preview-only variant — builds the tables without pushing, so the UI can
+// show what would be inserted before committing.
+app.get("/products/:id/quick-specs/preview", async (req, res) => {
+  if (!storedAccessToken) return res.status(401).json({ error: "Not authenticated" });
+  const { id } = req.params;
+  try {
+    const productRes = await fetch(
+      `https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${id}.json?fields=id,title,body_html,tags,handle,status,variants`,
+      { headers: { "X-Shopify-Access-Token": storedAccessToken } }
+    );
+    const productData = await productRes.json();
+    if (!productRes.ok || !productData.product) {
+      console.error(`❌ Quick Specs preview (${id}): product fetch failed —`, JSON.stringify(productData).slice(0, 500));
+      return res.status(productRes.status || 404).json({ error: "Product fetch failed", details: productData });
+    }
+    const product = productData.product;
+    res.json({
+      success: true,
+      quickSpecsHtml: buildQuickSpecsTable(product),
+      pricingHtml: buildPricingAvailabilityTable(product),
+      hasExistingBlock: (product.body_html || "").includes(RK_BLOCK_START),
+    });
+  } catch (err) {
+    console.error(`❌ Quick Specs preview (${id}) threw an exception:`, err.message);
+    res.status(500).json({ error: "Preview failed", message: err.message });
+  }
+});
+
+// ─── Custom Promotional Blocks — manual seasonal/marketing text ────────────
+// See upsertCustomBlock/removeCustomBlock/listCustomBlocks above for the
+// non-destructive, multi-block mechanism these routes wrap.
+app.post("/products/:id/custom-block", async (req, res) => {
+  if (!storedAccessToken) return res.status(401).json({ error: "Not authenticated" });
+  const { id } = req.params;
+  const { blockId, heading, text } = req.body || {};
+  if (!text || !text.trim()) return res.status(400).json({ error: "text is required" });
+  try {
+    const productRes = await fetch(
+      `https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${id}.json?fields=id,title,body_html`,
+      { headers: { "X-Shopify-Access-Token": storedAccessToken } }
+    );
+    const productData = await productRes.json();
+    if (!productRes.ok || !productData.product) {
+      console.error(`❌ Custom block push (${id}): product fetch failed —`, JSON.stringify(productData).slice(0, 500));
+      return res.status(productRes.status || 404).json({ error: "Product fetch failed", details: productData });
+    }
+    const product = productData.product;
+    const finalBlockId = slugifyBlockId(blockId || heading || text.slice(0, 30));
+    const updatedBodyHtml = upsertCustomBlock(product.body_html, finalBlockId, (heading || "").trim(), text.trim());
+
+    const pushRes = await fetch(
+      `https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${id}.json`,
+      { method: "PUT", headers: { "X-Shopify-Access-Token": storedAccessToken, "Content-Type": "application/json" }, body: JSON.stringify({ product: { id, body_html: updatedBodyHtml } }) }
+    );
+    const pushData = await pushRes.json();
+    if (!pushRes.ok) {
+      console.error(`❌ Custom block push (${id}, "${product.title}"): Shopify PUT failed (status ${pushRes.status}) —`, JSON.stringify(pushData).slice(0, 800));
+      return res.status(pushRes.status).json({ error: "Push failed", details: pushData });
+    }
+    console.log(`✅ Custom block "${finalBlockId}" pushed for "${product.title}" (${id})`);
+    res.json({ success: true, blockId: finalBlockId });
+  } catch (err) {
+    console.error(`❌ Custom block push (${id}) threw an exception:`, err.message);
+    res.status(500).json({ error: "Custom block push failed", message: err.message });
+  }
+});
+
+app.get("/products/:id/custom-block", async (req, res) => {
+  if (!storedAccessToken) return res.status(401).json({ error: "Not authenticated" });
+  const { id } = req.params;
+  try {
+    const productRes = await fetch(
+      `https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${id}.json?fields=id,title,body_html`,
+      { headers: { "X-Shopify-Access-Token": storedAccessToken } }
+    );
+    const productData = await productRes.json();
+    if (!productRes.ok || !productData.product) {
+      console.error(`❌ Custom block list (${id}): product fetch failed —`, JSON.stringify(productData).slice(0, 500));
+      return res.status(productRes.status || 404).json({ error: "Product fetch failed", details: productData });
+    }
+    res.json({ success: true, blocks: listCustomBlocks(productData.product.body_html) });
+  } catch (err) {
+    console.error(`❌ Custom block list (${id}) threw an exception:`, err.message);
+    res.status(500).json({ error: "List failed", message: err.message });
+  }
+});
+
+app.delete("/products/:id/custom-block/:blockId", async (req, res) => {
+  if (!storedAccessToken) return res.status(401).json({ error: "Not authenticated" });
+  const { id, blockId } = req.params;
+  try {
+    const productRes = await fetch(
+      `https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${id}.json?fields=id,title,body_html`,
+      { headers: { "X-Shopify-Access-Token": storedAccessToken } }
+    );
+    const productData = await productRes.json();
+    if (!productRes.ok || !productData.product) {
+      console.error(`❌ Custom block delete (${id}): product fetch failed —`, JSON.stringify(productData).slice(0, 500));
+      return res.status(productRes.status || 404).json({ error: "Product fetch failed", details: productData });
+    }
+    const product = productData.product;
+    const updatedBodyHtml = removeCustomBlock(product.body_html, blockId);
+
+    const pushRes = await fetch(
+      `https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${id}.json`,
+      { method: "PUT", headers: { "X-Shopify-Access-Token": storedAccessToken, "Content-Type": "application/json" }, body: JSON.stringify({ product: { id, body_html: updatedBodyHtml } }) }
+    );
+    const pushData = await pushRes.json();
+    if (!pushRes.ok) {
+      console.error(`❌ Custom block delete (${id}, "${product.title}"): Shopify PUT failed (status ${pushRes.status}) —`, JSON.stringify(pushData).slice(0, 800));
+      return res.status(pushRes.status).json({ error: "Delete failed", details: pushData });
+    }
+    console.log(`✅ Custom block "${blockId}" removed from "${product.title}" (${id})`);
+    res.json({ success: true });
+  } catch (err) {
+    console.error(`❌ Custom block delete (${id}) threw an exception:`, err.message);
+    res.status(500).json({ error: "Delete failed", message: err.message });
+  }
+});
+
+app.post("/ai/generate", async (req, res) => {
+  const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
+  if (!ANTHROPIC_KEY) return res.status(500).json({ error: "ANTHROPIC_API_KEY not configured" });
+  try {
+    const { system, user, max_tokens = 1200 } = req.body;
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_KEY.trim(), "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens, system, messages: [{ role: "user", content: user }] }),
+    });
+    const data = await response.json();
+    if (!response.ok) return res.status(response.status).json({ error: "Anthropic error", details: data });
+    res.json({ success: true, text: data.content?.map(b => b.text || "").join("") || "" });
+  } catch (err) { res.status(500).json({ error: "AI failed", message: err.message }); }
+});
+
+const MARKETPLACE_DOMAINS = [
+  "amazon.","flipkart.","snapdeal.","meesho.","myntra.","indiamart.",
+  "alibaba.","ebay.","etsy.","walmart.","paytmmall.","shopclues.",
+  "tatacliq.","ajio.","nykaa.","jiomart.",
+];
+
+function isMarketplace(url) {
+  return MARKETPLACE_DOMAINS.some(d => url.toLowerCase().includes(d));
+}
+
+function extractTextFromHTML(html) {
+  const h1Matches = [...html.matchAll(/<h1[^>]*>([\s\S]*?)<\/h1>/gi)];
+  const h1s = h1Matches.map(m => m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim()).filter(Boolean).slice(0, 5);
+  const h2h3Matches = [...html.matchAll(/<h[23][^>]*>([\s\S]*?)<\/h[23]>/gi)];
+  const h2h3s = h2h3Matches.map(m => m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim()).filter(Boolean).slice(0, 12);
+  const bodyText = html
+    .replace(/<script[\s\S]*?<\/script>/gi, "").replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<nav[\s\S]*?<\/nav>/gi, "").replace(/<footer[\s\S]*?<\/footer>/gi, "")
+    .replace(/<header[\s\S]*?<\/header>/gi, "").replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ").trim().slice(0, 3000);
+  return { text: bodyText, headings: { h1: h1s, h2h3: h2h3s } };
+}
+
+async function fetchPageText(url) {
+  try {
+    const controller = new AbortController();
+    const timeout    = setTimeout(() => controller.abort(), 8000);
+    const res        = await fetch(url, { signal: controller.signal, headers: { "User-Agent": "Mozilla/5.0 (compatible; RudraKailashSEOBot/1.0)", "Accept": "text/html" } });
+    clearTimeout(timeout);
+    if (!res.ok) return null;
+    return extractTextFromHTML(await res.text());
+  } catch (e) { return null; }
+}
+
+async function runCompetitorResearch(productTitle) {
+  const SERPER_KEY = process.env.SERPER_API_KEY;
+  if (!SERPER_KEY) return [];
+  const coreTitle = productTitle.replace(/\s*(bracelet|mala|pendant|ring|set|combo|pack|pair)\s*$/i, "").trim();
+  const queries = [
+    `${coreTitle} benefits significance`,
+    `${coreTitle} Shiva Purana Vedic meaning`,
+    `${coreTitle} certification authentic`,
+    `${coreTitle}`,
+  ];
+  try {
+    const seenUrls = new Set(), allResults = [];
+    for (const query of queries) {
+      if (allResults.length >= 12) break;
+      const serperRes  = await fetch("https://google.serper.dev/search", { method: "POST", headers: { "X-API-KEY": SERPER_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ q: query, gl: "in", hl: "en", num: 10 }) });
+      const serperData = await serperRes.json();
+      for (const result of (serperData.organic || [])) {
+        const url = result.link || "";
+        if (url && !isMarketplace(url) && !url.includes("rudrakailash.com") && !url.includes("google.") && !seenUrls.has(url)) {
+          seenUrls.add(url);
+          allResults.push({ url, title: result.title || "", snippet: result.snippet || "" });
+        }
+      }
+    }
+    console.log(`🔍 Competitor candidates for "${productTitle}": ${allResults.length}`);
+    const competitors = [];
+    for (const result of allResults.slice(0, 10)) {
+      const extracted = await fetchPageText(result.url);
+      competitors.push({ ...result, content: extracted ? extracted.text : result.snippet, headings: extracted ? extracted.headings : { h1: [], h2h3: [] }, fetched: !!extracted });
+    }
+    console.log(`🔍 Fetched: ${competitors.filter(c => c.fetched).length}/${competitors.length}`);
+    return competitors;
+  } catch (e) { console.warn("Competitor research failed:", e.message); return []; }
+}
+
+app.post("/competitor/research", async (req, res) => {
+  const { productTitle } = req.body;
+  if (!productTitle) return res.status(400).json({ error: "productTitle required" });
+  try {
+    const competitors = await runCompetitorResearch(productTitle);
+    res.json({ success: true, competitors, totalFound: competitors.length });
+  } catch (err) { res.status(500).json({ error: "Research failed", message: err.message }); }
+});
+
+function autoKeyword(productTitle) { return `${productTitle} buy online`; }
+
+async function checkRankPosition(keyword, gl = "in") {
+  const SERPER_KEY = process.env.SERPER_API_KEY;
+  if (!SERPER_KEY) return null;
+  try {
+    const serperRes  = await fetch("https://google.serper.dev/search", { method: "POST", headers: { "X-API-KEY": SERPER_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ q: keyword, gl, hl: "en", num: 100 }) });
+    const serperData = await serperRes.json();
+    const organic    = serperData.organic || [];
+    for (let i = 0; i < organic.length; i++) {
+      if ((organic[i].link || "").includes(STORE_DOMAIN_SHORT)) return i + 1;
+    }
+    return null;
+  } catch (e) { console.warn(`Rank check failed for "${keyword}" (${gl}):`, e.message); return null; }
+}
+
+app.get("/rank/keywords", async (req, res) => { res.json({ success: true, keywords: await loadKeywordsAsync(), storage: DB_CONFIGURED ? "mysql" : "json" }); });
+
+app.post("/rank/keywords", async (req, res) => {
+  const { productId, productTitle, keyword } = req.body;
+  if (!productId || !productTitle) return res.status(400).json({ error: "productId and productTitle required" });
+  const entry = { productId, productTitle, keyword: keyword || autoKeyword(productTitle), isCustom: !!keyword, addedAt: new Date().toISOString() };
+  await saveKeywordEntryAsync(entry);
+  res.json({ success: true, entry });
+});
+
+app.delete("/rank/keywords/:productId", async (req, res) => {
+  await deleteKeywordAsync(req.params.productId);
+  res.json({ success: true });
+});
+
+app.get("/rank/data", async (req, res) => { res.json({ success: true, rankData: await loadRankDataAsync(), keywords: await loadKeywordsAsync(), storage: DB_CONFIGURED ? "mysql" : "json" }); });
+
+app.post("/rank/check/:productId", async (req, res) => {
+  const keywords = await loadKeywordsAsync();
+  const entry    = keywords[req.params.productId];
+  if (!entry) return res.status(404).json({ error: "Product not tracked. Add keyword first." });
+  res.json({ message: "Rank check started — results in ~30 seconds.", keyword: entry.keyword });
+  setTimeout(async () => { await checkAndStoreRank(entry); }, 100);
+});
+
+async function checkAndStoreRank(entry) {
+  const { productId, productTitle, keyword } = entry;
+  console.log(`📊 Checking rank: "${keyword}"`);
+  const [posIN, posGlobal] = await Promise.all([checkRankPosition(keyword, "in"), checkRankPosition(keyword, "us")]);
+  const today = new Date().toISOString().split("T")[0];
+
+  const wroteToDb = await saveRankCheckAsync(productId, today, posIN, posGlobal);
+  if (!wroteToDb) {
+    const rankData = loadRankData();
+    if (!rankData[productId]) rankData[productId] = { productId, productTitle, keyword, history: [] };
+    rankData[productId].history = rankData[productId].history.filter(h => h.date !== today);
+    rankData[productId].history.push({ date: today, posIN, posGlobal, checkedAt: new Date().toISOString() });
+    rankData[productId].history = rankData[productId].history.sort((a, b) => a.date.localeCompare(b.date)).slice(-90);
+    rankData[productId].lastChecked  = new Date().toISOString();
+    rankData[productId].latestIN     = posIN;
+    rankData[productId].latestGlobal = posGlobal;
+    saveRankData(rankData);
+  }
+  console.log(`✅ Rank stored (${wroteToDb ? "MySQL" : "JSON file"}): "${keyword}" — IN: ${posIN || "Not found"}, Global: ${posGlobal || "Not found"}`);
+  return { posIN, posGlobal };
+}
+
+cron.schedule("30 0 * * *", async () => {
+  console.log("📊 Daily rank check — 6am IST");
+  const keywords = await loadKeywordsAsync();
+  const entries  = Object.values(keywords);
+  if (entries.length === 0) { console.log("📊 No products tracked yet."); return; }
+  for (const entry of entries) { await checkAndStoreRank(entry); await new Promise(r => setTimeout(r, 2000)); }
+  console.log("📊 Daily rank check complete.");
+}, { timezone: "UTC" });
+
+cron.schedule("30 1 * * 1", async () => {
+  console.log("📊 Weekly rank report — Monday 7am IST");
+  const rankData = await loadRankDataAsync();
+  const entries  = Object.values(rankData);
+  if (entries.length === 0) return;
+  const rows = entries.map(entry => {
+    const history = entry.history || [], latest = history[history.length - 1], prev = history[history.length - 8];
+    const posIN = latest?.posIN || null, posGlobal = latest?.posGlobal || null, prevIN = prev?.posIN || null;
+    const deltaIN = prevIN && posIN ? prevIN - posIN : null;
+    const trend = deltaIN === null ? "—" : deltaIN > 0 ? `▲ ${deltaIN}` : deltaIN < 0 ? `▼ ${Math.abs(deltaIN)}` : "→ same";
+    return { title: entry.productTitle, keyword: entry.keyword, posIN, posGlobal, trend, deltaIN };
+  });
+  rows.sort((a, b) => (b.deltaIN || 0) - (a.deltaIN || 0));
+  const tableRows = rows.map(r => `<tr style="border-bottom:1px solid #2E1500"><td style="padding:10px 14px;color:#F5E6C8;font-size:13px">${r.title}</td><td style="padding:10px 14px;color:#9A7050;font-size:11px">${r.keyword}</td><td style="padding:10px 14px;text-align:center;color:${r.posIN ? '#7FD48A' : '#9A7050'};font-weight:bold">${r.posIN ? '#' + r.posIN : 'Not found'}</td><td style="padding:10px 14px;text-align:center;color:${r.posGlobal ? '#80C0F0' : '#9A7050'};font-weight:bold">${r.posGlobal ? '#' + r.posGlobal : 'Not found'}</td><td style="padding:10px 14px;text-align:center;color:${r.deltaIN > 0 ? '#7FD48A' : r.deltaIN < 0 ? '#F08080' : '#9A7050'};font-weight:bold">${r.trend}</td></tr>`).join("");
+  const inTop10 = rows.filter(r => r.posIN && r.posIN <= 10).length, inTop50 = rows.filter(r => r.posIN && r.posIN <= 50).length, improved = rows.filter(r => r.deltaIN > 0).length;
+  const emailHtml = `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#0D0500;font-family:Georgia,serif"><div style="max-width:720px;margin:0 auto;padding:32px 20px"><div style="text-align:center;margin-bottom:32px"><div style="font-size:36px">ॐ</div><h1 style="color:#F0C84A;font-size:22px;margin:8px 0">RudraKailash SEO — Weekly Rank Report</h1><p style="color:#9A7050;font-size:13px">${new Date().toLocaleString("en-IN",{timeZone:"Asia/Kolkata"})} IST</p></div><div style="background:#1A0A00;border:1px solid #2E1500;border-radius:10px;padding:20px;margin-bottom:24px"><table width="100%"><tr><td style="text-align:center"><div style="color:#9A7050;font-size:11px;letter-spacing:1px">TRACKED</div><div style="color:#F0C84A;font-size:28px;font-weight:bold">${entries.length}</div></td><td style="text-align:center"><div style="color:#9A7050;font-size:11px;letter-spacing:1px">TOP 10 (IN)</div><div style="color:#7FD48A;font-size:28px;font-weight:bold">${inTop10}</div></td><td style="text-align:center"><div style="color:#9A7050;font-size:11px;letter-spacing:1px">TOP 50 (IN)</div><div style="color:#80C0F0;font-size:28px;font-weight:bold">${inTop50}</div></td><td style="text-align:center"><div style="color:#9A7050;font-size:11px;letter-spacing:1px">IMPROVED</div><div style="color:#7FD48A;font-size:28px;font-weight:bold">${improved}</div></td></tr></table></div><table style="width:100%;border-collapse:collapse;background:#120600;border:1px solid #2E1500;border-radius:10px;overflow:hidden"><thead><tr style="background:#160800"><th style="padding:10px 14px;text-align:left;color:#9A7050;font-size:11px;font-weight:normal">PRODUCT</th><th style="padding:10px 14px;text-align:left;color:#9A7050;font-size:11px;font-weight:normal">KEYWORD</th><th style="padding:10px 14px;text-align:center;color:#9A7050;font-size:11px;font-weight:normal">GOOGLE.CO.IN</th><th style="padding:10px 14px;text-align:center;color:#9A7050;font-size:11px;font-weight:normal">GOOGLE.COM</th><th style="padding:10px 14px;text-align:center;color:#9A7050;font-size:11px;font-weight:normal">7-DAY TREND</th></tr></thead><tbody>${tableRows}</tbody></table><div style="text-align:center;margin-top:32px;border-top:1px solid #2E1500;padding-top:20px"><p style="color:#5A3020;font-size:11px">RudraKailash Agentic SEO · Daily tracking at 6am IST · Weekly report every Monday</p></div></div></body></html>`;
+  await sendEmail(`📊 RudraKailash Weekly Rank Report — ${new Date().toLocaleDateString("en-IN")}`, emailHtml);
+  console.log("📊 Weekly rank report sent.");
+}, { timezone: "UTC" });
+
+// ─── LLM Citation Tracking ─────────────────────────────────────────────────────
+async function checkCitation(query) {
+  const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
+  if (!ANTHROPIC_KEY) throw new Error("ANTHROPIC_API_KEY not configured");
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_KEY.trim(), "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1500,
+      system: "You are a helpful assistant answering a shopper's question with current, accurate information. Search the web as needed. Recommend specific brands, sellers, or websites where relevant, and cite your sources.",
+      messages: [{ role: "user", content: query }],
+      tools: [{ type: "web_search_20250305", name: "web_search" }],
+    }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data?.error?.message || "Anthropic API error");
+
+  let combinedText = "";
+  const citedDomains = new Set();
+
+  for (const block of (data.content || [])) {
+    if (block.type === "text") {
+      combinedText += (block.text || "") + " ";
+      for (const citation of (block.citations || [])) {
+        if (citation.url) { try { citedDomains.add(new URL(citation.url).hostname.replace(/^www\./, "")); } catch (_) {} }
+      }
+    }
+    if (block.type === "web_search_tool_result") {
+      for (const item of (Array.isArray(block.content) ? block.content : [])) {
+        if (item.url) { try { citedDomains.add(new URL(item.url).hostname.replace(/^www\./, "")); } catch (_) {} }
+      }
+    }
+  }
+
+  const mentionedInText = combinedText.toLowerCase().includes("rudrakailash");
+  const mentionedInCitations = [...citedDomains].some(d => d.includes("rudrakailash.com"));
+  const otherDomains = [...citedDomains].filter(d => !d.includes("rudrakailash.com")).sort();
+
+  return {
+    mentioned: mentionedInText || mentionedInCitations,
+    citedDomains: [...citedDomains],
+    otherDomains,
+    responseSnippet: combinedText.trim().slice(0, 1500),
+  };
+}
+
+app.get("/citations/queries", (req, res) => { res.json({ success: true, queries: loadCitationQueries() }); });
+
+app.post("/citations/queries", (req, res) => {
+  const { query, label } = req.body;
+  if (!query) return res.status(400).json({ error: "query required" });
+  const queries = loadCitationQueries();
+  const id = String(Date.now());
+  queries[id] = { id, query, label: label || query, addedAt: new Date().toISOString() };
+  saveCitationQueries(queries);
+  res.json({ success: true, entry: queries[id] });
+});
+
+app.delete("/citations/queries/:id", (req, res) => {
+  const queries = loadCitationQueries();
+  delete queries[req.params.id];
+  saveCitationQueries(queries);
+  res.json({ success: true });
+});
+
+app.get("/citations/data", (req, res) => { res.json({ success: true, citationData: loadCitationData(), queries: loadCitationQueries() }); });
+
+app.post("/citations/check/:id", async (req, res) => {
+  const queries = loadCitationQueries();
+  const entry   = queries[req.params.id];
+  if (!entry) return res.status(404).json({ error: "Query not tracked. Add it first." });
+  res.json({ message: "Citation check started — results in ~15-30 seconds.", query: entry.query });
+  setTimeout(async () => { await checkAndStoreCitation(entry); }, 100);
+});
+
+async function checkAndStoreCitation(entry) {
+  const { id, query, label } = entry;
+  console.log(`🔎 Checking citation: "${query}"`);
+  try {
+    const result   = await checkCitation(query);
+    const today    = new Date().toISOString().split("T")[0];
+    const citationData = loadCitationData();
+    if (!citationData[id]) citationData[id] = { id, query, label, history: [] };
+    citationData[id].history = citationData[id].history.filter(h => h.date !== today);
+    citationData[id].history.push({ date: today, mentioned: result.mentioned, otherDomains: result.otherDomains, responseSnippet: result.responseSnippet, checkedAt: new Date().toISOString() });
+    citationData[id].history = citationData[id].history.sort((a, b) => a.date.localeCompare(b.date)).slice(-52);
+    citationData[id].lastChecked = new Date().toISOString();
+    citationData[id].lastMentioned = result.mentioned;
+    saveCitationData(citationData);
+    console.log(`✅ Citation stored: "${query}" — ${result.mentioned ? "MENTIONED ✅" : "not mentioned ❌"}`);
+    return result;
+  } catch (e) {
+    console.warn(`⚠️  Citation check failed for "${query}":`, e.message);
+    return null;
+  }
+}
+
+cron.schedule("0 2 * * 1", async () => {
+  console.log("🔎 Weekly citation check — Monday 7:30am IST");
+  const queries = loadCitationQueries();
+  const entries = Object.values(queries);
+  if (entries.length === 0) { console.log("🔎 No citation queries tracked yet."); return; }
+  for (const entry of entries) { await checkAndStoreCitation(entry); await new Promise(r => setTimeout(r, 3000)); }
+  const citationData = loadCitationData();
+  const rows = Object.values(citationData).map(e => {
+    const latest = e.history[e.history.length - 1];
+    return { label: e.label, mentioned: latest?.mentioned, otherDomains: (latest?.otherDomains || []).slice(0, 4).join(", ") };
+  });
+  const mentionedCount = rows.filter(r => r.mentioned).length;
+  const tableRows = rows.map(r => `<tr style="border-bottom:1px solid #2E1500"><td style="padding:10px 14px;color:#F5E6C8;font-size:13px">${r.label}</td><td style="padding:10px 14px;text-align:center;color:${r.mentioned ? '#7FD48A' : '#F08080'};font-weight:bold">${r.mentioned ? '✅ Cited' : '❌ Not cited'}</td><td style="padding:10px 14px;color:#9A7050;font-size:11px">${r.otherDomains || '—'}</td></tr>`).join("");
+  const emailHtml = `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#0D0500;font-family:Georgia,serif"><div style="max-width:720px;margin:0 auto;padding:32px 20px"><div style="text-align:center;margin-bottom:32px"><div style="font-size:36px">ॐ</div><h1 style="color:#F0C84A;font-size:22px;margin:8px 0">RudraKailash — Weekly LLM Citation Report</h1><p style="color:#9A7050;font-size:13px">${new Date().toLocaleString("en-IN",{timeZone:"Asia/Kolkata"})} IST</p></div><div style="background:#1A0A00;border:1px solid #2E1500;border-radius:10px;padding:20px;margin-bottom:24px"><table width="100%"><tr><td style="text-align:center"><div style="color:#9A7050;font-size:11px;letter-spacing:1px">TRACKED QUERIES</div><div style="color:#F0C84A;font-size:28px;font-weight:bold">${rows.length}</div></td><td style="text-align:center"><div style="color:#9A7050;font-size:11px;letter-spacing:1px">CITED IN</div><div style="color:#7FD48A;font-size:28px;font-weight:bold">${mentionedCount}/${rows.length}</div></td></tr></table></div><table style="width:100%;border-collapse:collapse;background:#120600;border:1px solid #2E1500;border-radius:10px;overflow:hidden"><thead><tr style="background:#160800"><th style="padding:10px 14px;text-align:left;color:#9A7050;font-size:11px;font-weight:normal">QUERY</th><th style="padding:10px 14px;text-align:center;color:#9A7050;font-size:11px;font-weight:normal">RUDRAKAILASH CITED?</th><th style="padding:10px 14px;text-align:left;color:#9A7050;font-size:11px;font-weight:normal">OTHER SOURCES CITED</th></tr></thead><tbody>${tableRows}</tbody></table><div style="text-align:center;margin-top:32px;border-top:1px solid #2E1500;padding-top:20px"><p style="color:#5A3020;font-size:11px">RudraKailash Agentic SEO · LLM Citation Tracker · Weekly, Monday 7:30am IST</p></div></div></body></html>`;
+  await sendEmail(`🔎 RudraKailash Weekly Citation Report — ${mentionedCount}/${rows.length} cited`, emailHtml);
+  console.log("🔎 Weekly citation report sent.");
+}, { timezone: "UTC" });
 
 // ─── Service product detection ────────────────────────────────────────────────
+// NOTE (Aug 2026 fix): title/tags are a reliable signal for actual Puja/Homa
+// service listings — their product titles are named things like "X Homa" or
+// "X Puja" directly. The product DESCRIPTION text is much noisier: a real
+// Rudraksha bead's AI-written description legitimately discusses traditional
+// use-cases and often mentions generic devotional words like "puja",
+// "abhishek", or "ritual" in passing (e.g. "worn during puja for clarity").
+// Checking those generic single words against the description caused real
+// bead products to be misdetected as services, which incorrectly blocked the
+// Quick Specs push for them. The description is now only checked against
+// strong, service-specific phrases that a real service listing's own
+// description would contain (per the isService prompt template below, which
+// always mentions "MVS Vedapadasala" / "vadhyar" / "online puja" etc.) —
+// never a single generic word.
 function isServiceProduct(product) {
-  if (!product) return false;
-  const title = " " + (product.title || "").toLowerCase().trim() + " ";
-  const serviceWords = [
-    " homa ", " homam ", " puja ", " pooja ",
-    " parayanam ", " parayana ", " abhishek ",
-    " yagna ", " yajna ", " archana ",
+  const title = (product.title || "").toLowerCase();
+  const tags  = (product.tags  || "").toLowerCase();
+  const body  = (product.body_html || "").toLowerCase().slice(0, 300);
+  const serviceKeywords = [
+    "homa", "homam", "puja", "pooja", "parayanam", "parayana",
+    "abhishek", "archana", "yagna", "yajna", "ritual", "fire ritual",
+    "vedic fire", "online puja", "online homa", "rudra abhishek",
+    "sundara kanda", "vishnu sahasranama", "kanda parayanam",
   ];
-  const titleRaw = (product.title || "").toLowerCase().trim();
-  const endsWithService = serviceWords.some(w => titleRaw.endsWith(w.trim()));
-  const containsService = serviceWords.some(w => title.includes(w));
-  return containsService || endsWithService;
+  if (serviceKeywords.some(kw => title.includes(kw) || tags.includes(kw))) return true;
+
+  const strongServiceDescriptionPhrases = [
+    "online puja", "online homa", "vedic fire", "fire ritual",
+    "rudra abhishek", "sundara kanda", "vishnu sahasranama", "kanda parayanam",
+    "mvs vedapadasala", "vadhyar",
+  ];
+  return strongServiceDescriptionPhrases.some(kw => body.includes(kw));
 }
 
 // ─── Karungali product detection ─────────────────────────────────────────────
 function isKarungaliProduct(product) {
-  if (!product) return false;
   const title = (product.title || "").toLowerCase();
   const tags  = (product.tags  || "").toLowerCase();
   const body  = (product.body_html || "").toLowerCase().slice(0, 300);
   const karungaliKeywords = [
-    "karungali","karungal","ebony","ebony wood","ebony mala",
-    "ebony bracelet","karungali mala","karungali bracelet",
-    "diospyros ebenum","karungali kattai",
+    "karungali", "karungal", "ebony", "ebony wood", "ebony mala",
+    "ebony bracelet", "karungali mala", "karungali bracelet",
+    "diospyros ebenum", "karungali kattai",
   ];
   return karungaliKeywords.some(kw => title.includes(kw) || tags.includes(kw) || body.includes(kw));
 }
 
 // ─── Sphatik product detection ────────────────────────────────────────────────
 function isSphatikProduct(product) {
-  if (!product) return false;
   const title = (product.title || "").toLowerCase();
   const tags  = (product.tags  || "").toLowerCase();
   const body  = (product.body_html || "").toLowerCase().slice(0, 300);
@@ -619,7 +932,6 @@ function isSphatikProduct(product) {
 
 // ─── Tulsi product detection ─────────────────────────────────────────────────
 function isTulsiProduct(product) {
-  if (!product) return false;
   const title = (product.title || "").toLowerCase();
   const tags  = (product.tags  || "").toLowerCase();
   const body  = (product.body_html || "").toLowerCase().slice(0, 300);
@@ -628,11 +940,6 @@ function isTulsiProduct(product) {
     "tulsi bracelet", "ocimum tenuiflorum",
   ];
   return tulsiKeywords.some(kw => title.includes(kw) || tags.includes(kw) || body.includes(kw));
-}
-
-// ─── Mala product detection ──────────────────────────────────────────────────
-function isMalaProduct(title) {
-  return /\bmala\b/i.test(title || "");
 }
 
 // ─── Origin resolution ─────────────────────────────────────────────────────────
@@ -685,6 +992,10 @@ function resolveOrigin(title, isMala) {
     }
     return null;
   }
+}
+
+function isMalaProduct(title) {
+  return /\bmala\b/i.test(title || "");
 }
 
 function buildOriginBlock(origin) {
@@ -755,11 +1066,347 @@ function buildMukhiFactsBlock(facts) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ─── Verified Anchor Content Library (mirrors server.js exactly) ────────────
-// See server.js for the full design-rationale comment. Do NOT invent a
-// "unique" detail per product to fill a gap here — an unmatched product
-// simply gets no anchor content, and the prompt is instructed to omit the
-// enhanced passage rather than guess.
+// ─── Quick Specs + Pricing/Availability tables — GEO structured-data blocks ─
+// Deterministic (never Haiku-generated) — sourced from MUKHI_FACTS,
+// resolveOrigin(), isKarungaliProduct(), and live Shopify variant data, so
+// nothing here is an LLM guess. Added Aug 2026 per Subbu's request to give
+// AI answer engines (Perplexity, Gemini Shopping) an explicit fact box
+// instead of having to parse prose, plus a live price/stock block, since
+// those engines won't cite a product they can't confirm is in stock.
+//
+// IMPORTANT — Shopify field requirement: buildPricingAvailabilityTable reads
+// product.variants (price, inventory_quantity, weight, title). The product
+// fetches elsewhere in this file request a restricted `fields=` list that
+// does NOT include variants by default — the /products/:id/quick-specs route
+// below fetches with variants explicitly included. If you reuse these
+// functions elsewhere, make sure the product object you pass in was fetched
+// with `fields=...,variants` (or from a Shopify webhook payload, which
+// includes variants by default).
+//
+// KNOWN RISK — inventory_quantity: the app's current OAuth scope is
+// `read_products,write_products,read_product_listings`. Shopify variants
+// still generally return `inventory_quantity` under `read_products` for a
+// single-location shop, but if you see it come back null/undefined for every
+// variant, the fix is adding `read_inventory` to the OAuth scope in
+// app.get("/auth/install") below and re-authenticating the store — this
+// wasn't testable without live store credentials, so verify it once against
+// a real product before relying on stock status in production.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const FALLBACK_BEAD_DIMENSION_RANGE = { min: 19, max: 29, unit: "mm" };
+const FALLBACK_BEAD_WEIGHT_RANGE    = { min: 3,  max: 6,  unit: "g"  };
+
+function getBeadDimensionRange(variants) {
+  const sizes = [];
+  for (const v of variants || []) {
+    const match = (v.title || v.option1 || "").match(/(\d+(\.\d+)?)\s*mm/i);
+    if (match) sizes.push(parseFloat(match[1]));
+  }
+  if (!sizes.length) return null;
+  const min = Math.min(...sizes), max = Math.max(...sizes);
+  const fmt = n => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+  return min === max ? `Approx. ${fmt(min)}mm` : `Approx. ${fmt(min)}mm – ${fmt(max)}mm`;
+}
+
+// NOTE (Aug 2026): if a product has more than one size variant but every
+// variant reports the exact same weight, that's almost always a sign the
+// weight field was never set per-variant in Shopify (a real spread of bead
+// sizes should have a real spread of weights) — not an actual fact worth
+// showing as if it were precise. In that case this returns null so the
+// caller falls back to the approximate store-wide range instead of
+// displaying a flat number that looks exact but likely isn't. A single-
+// variant product reporting one weight is legitimate and is shown as-is.
+function getBeadWeightRange(variants) {
+  const list = variants || [];
+  const weights = list
+    .map(v => parseFloat(v.weight))
+    .filter(w => !isNaN(w) && w > 0 && (list.find(x => parseFloat(x.weight) === w)?.weight_unit || "g") === "g");
+  if (!weights.length) return null;
+
+  const distinct = [...new Set(weights)];
+  if (list.length > 1 && distinct.length === 1) return null;
+
+  const min = Math.min(...weights), max = Math.max(...weights);
+  return min === max ? `Approx. ${min}g` : `Approx. ${min}g – ${max}g`;
+}
+
+function toSpecRow(label, value) { return value ? [label, value] : null; }
+
+function renderSpecTable(title, containerClass, rows) {
+  const rowsHtml = rows.filter(Boolean)
+    .map(([label, value]) => `      <tr><td><strong>${label}</strong></td><td>${value}</td></tr>`)
+    .join("\n");
+  if (!rowsHtml) return "";
+  return `<div class="rk-quick-specs-block ${containerClass}">
+  <h3>${title}</h3>
+  <table class="rk-specs-table">
+    <tbody>
+${rowsHtml}
+    </tbody>
+  </table>
+</div>`;
+}
+
+// Builds the "Quick Specifications" fact box. product must include `variants`
+// (see field-requirement note above). Karungali rows deliberately omit
+// Ruling Planet/Deity/Chakra — no verified Karungali Jyotish anchor content
+// exists yet (per Subbu, July 2026), so this doesn't guess.
+function buildQuickSpecsTable(product) {
+  const isKarungali = isKarungaliProduct(product);
+  const dimensionRange = getBeadDimensionRange(product.variants) ||
+    `Approx. ${FALLBACK_BEAD_DIMENSION_RANGE.min}mm – ${FALLBACK_BEAD_DIMENSION_RANGE.max}mm`;
+  const weightRange = getBeadWeightRange(product.variants) ||
+    `Approx. ${FALLBACK_BEAD_WEIGHT_RANGE.min}g – ${FALLBACK_BEAD_WEIGHT_RANGE.max}g`;
+
+  let rows;
+  if (isKarungali) {
+    rows = [
+      toSpecRow("Origin", "Tamil Nadu, South India"),
+      toSpecRow("Wood Type", "Karungali (Diospyros ebenum)"),
+      toSpecRow("Craftsmanship", "Hand-turned and silver-capped in-house"),
+      toSpecRow("Bead Dimensions", dimensionRange),
+      toSpecRow("Bead Weight", weightRange),
+    ];
+  } else {
+    const isMalaProd = isMalaProduct(product.title);
+    const origin = resolveOrigin(product.title, isMalaProd);
+    const mukhiMatch = (product.title || "").match(/(\d{1,2})\s*Mukhi/i);
+    const mukhiLabel = mukhiMatch ? `${mukhiMatch[1]} Mukhi (RKRTL Verified)` : null;
+    const facts = getMukhiFacts(product.title);
+    rows = [
+      toSpecRow("Origin", origin && !origin.notStocked ? origin.metaShort : null),
+      toSpecRow("Mukhi Count", mukhiLabel),
+      toSpecRow("Authentication", "RKRTL X-Ray Certified (Raw, Edge-enhanced, Inverse views)"),
+      toSpecRow("Bead Dimensions", dimensionRange),
+      toSpecRow("Bead Weight", weightRange),
+      toSpecRow("Ruling Planet & Deity", facts && facts.planet && facts.deity ? `${facts.planet} / ${facts.deity}` : null),
+      toSpecRow("Chakra Alignment", facts ? facts.chakra || null : null),
+    ];
+  }
+  return renderSpecTable("Quick Specifications", "rk-quick-specs", rows);
+}
+
+// Builds the "Pricing & Availability" block from LIVE Shopify variant data.
+// ⚠️ This must always be built fresh from a just-fetched product — never
+// cache or bake this into stored AI-generated content, or it will go stale
+// exactly like the announcement-bar pricing-consistency issue already
+// flagged. The /products/:id/quick-specs route below fetches fresh every
+// time it's called for this reason.
+function buildPricingAvailabilityTable(product) {
+  const isKarungali = isKarungaliProduct(product);
+  const variants = product.variants || [];
+
+  const prices = variants.map(v => parseFloat(v.price)).filter(p => !isNaN(p));
+  const minPrice = prices.length ? Math.min(...prices) : null;
+  const maxPrice = prices.length ? Math.max(...prices) : null;
+  const priceDisplay = minPrice === null ? null
+    : minPrice === maxPrice ? `₹${minPrice.toLocaleString("en-IN")}`
+    : `₹${minPrice.toLocaleString("en-IN")} – ₹${maxPrice.toLocaleString("en-IN")}`;
+
+  const inventoryKnown = variants.some(v => typeof v.inventory_quantity === "number");
+  const totalInventory = variants.reduce((sum, v) => sum + (typeof v.inventory_quantity === "number" ? v.inventory_quantity : 0), 0);
+  const stockStatus = !inventoryKnown ? null
+    : totalInventory > 0 ? "In Stock (Ready for immediate dispatch)"
+    : "Currently Out of Stock";
+
+  const hasSilverCapping = variants.some(v => /silver capping/i.test(v.title || ""));
+  const packagingItems = isKarungali
+    ? [product.title, hasSilverCapping ? "Silver Capping (if selected)" : null, "Protective Packaging"].filter(Boolean)
+    : [product.title, "Physical RKRTL PVC Certificate Card with QR Verification Code", "Saffron Thread", hasSilverCapping ? "Silver Capping (if selected)" : null, "Free Rudraksha Fruits"].filter(Boolean);
+
+  const rows = [
+    toSpecRow("Price", priceDisplay),
+    toSpecRow("Stock Status", stockStatus),
+    toSpecRow("Packaging Includes", packagingItems.join(", ")),
+  ];
+  return renderSpecTable("Pricing &amp; Availability", "rk-pricing-availability", rows);
+}
+
+// ─── Non-destructive block upsert ─────────────────────────────────────────
+// Inserts (or, on re-run, replaces in place) the Quick Specs and
+// Pricing/Availability blocks inside a marker comment pair, WITHOUT
+// regenerating or touching anything else in the existing body_html. This is
+// what makes the /products/:id/quick-specs route additive rather than a full
+// AI rewrite: whatever is currently live on the product page — hand edits,
+// a previous RSA v8 description, whatever — is left completely untouched
+// except for this one bounded block. Re-running is idempotent: the marker
+// pair is found and its contents swapped, never duplicated.
+const RK_BLOCK_START = "<!-- RK-QUICK-SPECS:START (auto-generated — do not edit between markers, re-running the Quick Specs push overwrites this block only) -->";
+const RK_BLOCK_END   = "<!-- RK-QUICK-SPECS:END -->";
+
+function upsertGeneratedBlocks(currentBodyHtml, quickSpecsHtml, pricingHtml) {
+  const blockInner = [quickSpecsHtml, pricingHtml].filter(Boolean).join("\n");
+  const block = `${RK_BLOCK_START}\n${blockInner}\n${RK_BLOCK_END}`;
+  const html = currentBodyHtml || "";
+
+  const startIdx = html.indexOf(RK_BLOCK_START);
+  const endIdx   = html.indexOf(RK_BLOCK_END);
+  if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+    // Marker pair already present from a prior run — replace in place only.
+    return html.slice(0, startIdx) + block + html.slice(endIdx + RK_BLOCK_END.length);
+  }
+
+  // First run — insert right after the first closing </h2> (matches "right
+  // under your main title" placement), or prepend if no <h2> is found.
+  const h2CloseIdx = html.search(/<\/h2>/i);
+  if (h2CloseIdx !== -1) {
+    const insertAt = h2CloseIdx + "</h2>".length;
+    return html.slice(0, insertAt) + "\n" + block + html.slice(insertAt);
+  }
+  return block + "\n" + html;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── Custom Promotional Blocks — manually authored, seasonal/one-off text ──
+// Distinct from Quick Specs (deterministic, auto-generated, always one
+// block): this is free-form text Subbu writes himself — e.g. a Raksha
+// Bandhan gifting pitch — inserted non-destructively right before the FAQ
+// section. Each block carries its own short label (e.g.
+// "raksha-bandhan-2026"), so several can coexist independently: pushing a
+// new label adds alongside existing blocks, pushing an existing label
+// replaces just that one in place, and deleting a label removes only that
+// block — everything else on the page (Quick Specs, other custom blocks,
+// the rest of the description) is untouched.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const RK_CUSTOM_BLOCKS_CONTAINER_START = "<!-- RK-CUSTOM-BLOCKS:START -->";
+const RK_CUSTOM_BLOCKS_CONTAINER_END   = "<!-- RK-CUSTOM-BLOCKS:END -->";
+
+function slugifyBlockId(raw) {
+  return (raw || "")
+    .toLowerCase().trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60) || `block-${Date.now()}`;
+}
+
+function customBlockMarkers(blockId) {
+  return {
+    start: `<!-- RK-CUSTOM-BLOCK:${blockId}:START -->`,
+    end:   `<!-- RK-CUSTOM-BLOCK:${blockId}:END -->`,
+  };
+}
+
+function renderCustomBlockHtml(blockId, heading, text) {
+  const { start, end } = customBlockMarkers(blockId);
+  const paragraphs = (text || "")
+    .split(/\n\s*\n/)
+    .map(p => p.trim())
+    .filter(Boolean)
+    .map(p => `    <p>${p.replace(/\n/g, "<br>")}</p>`)
+    .join("\n");
+  const headingHtml = heading ? `    <h3>${heading}</h3>\n` : "";
+  return `${start}\n  <div class="rk-custom-block">\n${headingHtml}${paragraphs}\n  </div>\n${end}`;
+}
+
+// Inserts a new labelled block, or — if a block with this exact label
+// already exists anywhere on the page — replaces just that one in place.
+// New blocks join any existing ones inside a shared container, which lives
+// right before the FAQ heading (or at the very end of the page if there's
+// no FAQ section to anchor to yet).
+function upsertCustomBlock(currentBodyHtml, blockId, heading, text) {
+  const html = currentBodyHtml || "";
+  const newBlockHtml = renderCustomBlockHtml(blockId, heading, text);
+  const { start: blockStart, end: blockEnd } = customBlockMarkers(blockId);
+
+  const containerStartIdx = html.indexOf(RK_CUSTOM_BLOCKS_CONTAINER_START);
+  const containerEndIdx   = html.indexOf(RK_CUSTOM_BLOCKS_CONTAINER_END);
+
+  if (containerStartIdx !== -1 && containerEndIdx !== -1 && containerEndIdx > containerStartIdx) {
+    const containerInner = html.slice(containerStartIdx + RK_CUSTOM_BLOCKS_CONTAINER_START.length, containerEndIdx);
+    const existingStartIdx = containerInner.indexOf(blockStart);
+    const existingEndIdx   = containerInner.indexOf(blockEnd);
+
+    let updatedInner;
+    if (existingStartIdx !== -1 && existingEndIdx !== -1) {
+      updatedInner = containerInner.slice(0, existingStartIdx) + newBlockHtml + containerInner.slice(existingEndIdx + blockEnd.length);
+    } else {
+      updatedInner = containerInner.trimEnd() + "\n" + newBlockHtml + "\n";
+    }
+    return html.slice(0, containerStartIdx)
+      + RK_CUSTOM_BLOCKS_CONTAINER_START + "\n" + updatedInner.trim() + "\n" + RK_CUSTOM_BLOCKS_CONTAINER_END
+      + html.slice(containerEndIdx + RK_CUSTOM_BLOCKS_CONTAINER_END.length);
+  }
+
+  const container = `${RK_CUSTOM_BLOCKS_CONTAINER_START}\n${newBlockHtml}\n${RK_CUSTOM_BLOCKS_CONTAINER_END}`;
+  const faqHeadingMatch = html.match(/<h3>\s*Frequently Asked Questions[^<]*<\/h3>/i);
+  if (faqHeadingMatch) {
+    return html.slice(0, faqHeadingMatch.index) + container + "\n" + html.slice(faqHeadingMatch.index);
+  }
+  return html.trimEnd() + "\n" + container;
+}
+
+// Removes one labelled block by ID. If it was the last block left inside
+// the shared container, cleans up the now-empty container markers too
+// rather than leaving stray HTML comments behind.
+function removeCustomBlock(currentBodyHtml, blockId) {
+  const html = currentBodyHtml || "";
+  const { start: blockStart, end: blockEnd } = customBlockMarkers(blockId);
+  const blockStartIdx = html.indexOf(blockStart);
+  const blockEndIdx   = html.indexOf(blockEnd);
+  if (blockStartIdx === -1 || blockEndIdx === -1) return html;
+
+  let updated = html.slice(0, blockStartIdx) + html.slice(blockEndIdx + blockEnd.length);
+
+  const containerStartIdx = updated.indexOf(RK_CUSTOM_BLOCKS_CONTAINER_START);
+  const containerEndIdx   = updated.indexOf(RK_CUSTOM_BLOCKS_CONTAINER_END);
+  if (containerStartIdx !== -1 && containerEndIdx !== -1) {
+    const inner = updated.slice(containerStartIdx + RK_CUSTOM_BLOCKS_CONTAINER_START.length, containerEndIdx).trim();
+    if (!inner) {
+      updated = updated.slice(0, containerStartIdx) + updated.slice(containerEndIdx + RK_CUSTOM_BLOCKS_CONTAINER_END.length);
+    }
+  }
+  return updated;
+}
+
+// Lists currently-live custom blocks on a product, so the UI can show
+// what's active right now without Subbu needing to remember exact labels.
+function listCustomBlocks(bodyHtml) {
+  const html = bodyHtml || "";
+  const blocks = [];
+  const re = /<!-- RK-CUSTOM-BLOCK:(.+?):START -->([\s\S]*?)<!-- RK-CUSTOM-BLOCK:\1:END -->/g;
+  let match;
+  while ((match = re.exec(html)) !== null) {
+    const inner = match[2];
+    const headingMatch = inner.match(/<h3>(.*?)<\/h3>/i);
+    const firstParaMatch = inner.match(/<p>(.*?)<\/p>/i);
+    const previewSource = firstParaMatch ? firstParaMatch[1] : inner.replace(/<[^>]+>/g, " ");
+    blocks.push({
+      id: match[1],
+      heading: headingMatch ? headingMatch[1] : null,
+      preview: previewSource.replace(/\s+/g, " ").trim().slice(0, 140),
+    });
+  }
+  return blocks;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── Verified Anchor Content Library ─────────────────────────────────────────
+// Real, non-templated content confirmed by Subbu against his actual operation
+// (RKRTL testing process, sourcing, and observed order patterns — July 2026).
+// Purpose: RSA v8 was producing structurally identical "Seekers traditionally
+// associate / report / describe" passages across every product, differing only
+// by swapped nouns (deity/planet/benefit word) — Traditional Benefits and Who
+// Should Wear sections were ~60% of body content and effectively templated at
+// catalog scale. Google's Feb/March 2026 core updates specifically target this
+// pattern (mass-produced content, cosmetic variation only, no original signal)
+// even when each individual page reads fine in isolation.
+//
+// Design principle, confirmed with Subbu: do NOT invent a "unique" detail per
+// product to satisfy this requirement — a fabricated specific is worse than
+// the templated language it would replace, since it's an unverifiable claim
+// dressed up as a real one. If no anchor content matches a product, the prompt
+// is instructed to omit the enhanced passage entirely rather than guess.
+//
+// UNIVERSAL entries apply to every true Rudraksha bead/mala product (isBead
+// branch only — never Karungali/Sphatik/Tulsi/Service, which have their own
+// authentication stories or, for Tulsi, none at all). PRODUCT_SPECIFIC entries
+// only apply when the product title matches (by mukhi number or named bead).
+//
+// Content provenance, for future editors: these are Subbu's own observations
+// from running RKRTL certification and RudraKailash order history — not
+// competitor claims, not invented differentiators. Do not add an entry here
+// without an equivalent confirmation step.
 // ═══════════════════════════════════════════════════════════════════════════
 
 const ANCHOR_CONTENT_UNIVERSAL = [
@@ -860,128 +1507,6 @@ function buildAnchorContentBlock(items) {
 }
 // ═══════════════════════════════════════════════════════════════════════════
 
-// ═══════════════════════════════════════════════════════════════════════════
-// ─── Quick Specs + Pricing/Availability preview/push (mirrors server.js) ────
-// Actual table HTML is built server-side (deterministic, from live Shopify
-// variant data) via GET /products/:id/quick-specs/preview and
-// POST /products/:id/quick-specs — this section just wires the UI to those
-// endpoints. See server.js for buildQuickSpecsTable / buildPricingAvailabilityTable.
-// ═══════════════════════════════════════════════════════════════════════════
-
-async function previewQuickSpecs() {
-  if (!selectedProduct) return;
-  const btn = document.getElementById("previewSpecsBtn");
-  const wrap = document.getElementById("quickSpecsPreview");
-  btn.disabled = true; btn.textContent = "Loading…";
-  wrap.classList.remove("hidden");
-  wrap.innerHTML = `<span class="spinner"></span> Building tables from live Shopify data…`;
-  try {
-    const res = await fetch(`${PROXY_URL}/products/${selectedProduct.id}/quick-specs/preview`);
-    const data = await res.json();
-    if (!data.success) throw new Error(data.error || "Preview failed");
-    wrap.innerHTML = `
-      <div class="text-muted" style="font-size:11px;letter-spacing:.5px;margin-bottom:8px">
-        PREVIEW — NOT YET PUSHED ${data.hasExistingBlock ? '· <span style="color:var(--gold)">this product already has a Quick Specs block — pushing again will replace it in place, not duplicate it</span>' : ""}
-      </div>
-      ${data.quickSpecsHtml || '<div class="text-muted">No Quick Specs rows available for this product.</div>'}
-      ${data.pricingHtml || ""}
-    `;
-    document.getElementById("pushSpecsBtn").disabled = false;
-  } catch (e) {
-    wrap.innerHTML = `<div style="color:var(--red)">Preview failed: ${escHtml(e.message)}</div>`;
-  }
-  btn.disabled = false; btn.textContent = "📋 Preview Quick Specs + Pricing";
-}
-
-async function pushQuickSpecs() {
-  if (!selectedProduct) return;
-  const btn = document.getElementById("pushSpecsBtn");
-  btn.disabled = true; btn.textContent = "Pushing…";
-  try {
-    const res = await fetch(`${PROXY_URL}/products/${selectedProduct.id}/quick-specs`, { method: "POST" });
-    const data = await res.json();
-    if (!data.success) throw new Error(data.error || "Push failed");
-    btn.textContent = "✅ Pushed — existing content untouched";
-    btn.style.background = "var(--green)"; btn.style.color = "#000";
-    setTimeout(() => { btn.disabled = false; btn.textContent = "⚡ Push Quick Specs Only (non-destructive)"; btn.style.background = ""; btn.style.color = ""; }, 3000);
-  } catch (e) {
-    btn.textContent = "❌ Failed — Retry";
-    btn.disabled = false;
-    console.error("Quick Specs push failed:", e.message);
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// ─── Custom Promotional Blocks — manual seasonal/marketing text ────────────
-// Wires the UI to the labelled-block endpoints on server.js. Each block is
-// identified by its own label, so several can be added/removed independently
-// without disturbing each other, Quick Specs, or the rest of the description.
-// ═══════════════════════════════════════════════════════════════════════════
-
-async function loadCustomBlocks() {
-  if (!selectedProduct) return;
-  const list = document.getElementById("customBlocksList");
-  list.innerHTML = `<span class="spinner"></span> Loading active blocks…`;
-  try {
-    const res = await fetch(`${PROXY_URL}/products/${selectedProduct.id}/custom-block`);
-    const data = await res.json();
-    if (!data.success) throw new Error(data.error || "Failed to load blocks");
-    if (!data.blocks.length) {
-      list.innerHTML = `<div class="text-muted" style="font-size:12px">No custom blocks active on this product yet.</div>`;
-      return;
-    }
-    list.innerHTML = data.blocks.map(b => `
-      <div class="custom-block-item">
-        <div>
-          <div style="font-size:12px;color:var(--gold-lt);font-weight:bold">${escHtml(b.id)}</div>
-          ${b.heading ? `<div style="font-size:12px;color:var(--cream);margin-top:2px">${escHtml(b.heading)}</div>` : ""}
-          <div style="font-size:11px;color:var(--muted);margin-top:2px">${escHtml(b.preview)}${b.preview.length >= 140 ? "…" : ""}</div>
-        </div>
-        <button class="btn btn-danger btn-sm" onclick="removeCustomBlock('${b.id}')">Remove</button>
-      </div>`).join("");
-  } catch (e) {
-    list.innerHTML = `<div style="color:var(--red);font-size:12px">Failed to load: ${escHtml(e.message)}</div>`;
-  }
-}
-
-async function pushCustomBlock() {
-  if (!selectedProduct) return;
-  const text = document.getElementById("customBlockText").value.trim();
-  if (!text) { alert("Write something in the text box first."); return; }
-  const heading = document.getElementById("customBlockHeading").value.trim();
-  const blockId = document.getElementById("customBlockLabel").value.trim();
-  const btn = document.getElementById("pushCustomBlockBtn");
-  btn.disabled = true; btn.textContent = "Pushing…";
-  try {
-    const res = await fetch(`${PROXY_URL}/products/${selectedProduct.id}/custom-block`, {
-      method: "POST", headers: {"Content-Type":"application/json"},
-      body: JSON.stringify({ blockId, heading, text }),
-    });
-    const data = await res.json();
-    if (!data.success) throw new Error(data.error || "Push failed");
-    btn.textContent = "✅ Pushed"; btn.style.background = "var(--green)"; btn.style.color = "#000";
-    document.getElementById("customBlockLabel").value = data.blockId;
-    await loadCustomBlocks();
-    setTimeout(() => { btn.disabled = false; btn.textContent = "➕ Push Custom Block"; btn.style.background = ""; btn.style.color = ""; }, 2500);
-  } catch (e) {
-    btn.textContent = "❌ Failed — Retry"; btn.disabled = false;
-    console.error("Custom block push failed:", e.message);
-  }
-}
-
-async function removeCustomBlock(blockId) {
-  if (!selectedProduct) return;
-  if (!confirm(`Remove custom block "${blockId}" from this product? This can't be undone from here — you'd need to re-add it.`)) return;
-  try {
-    const res = await fetch(`${PROXY_URL}/products/${selectedProduct.id}/custom-block/${encodeURIComponent(blockId)}`, { method: "DELETE" });
-    const data = await res.json();
-    if (!data.success) throw new Error(data.error || "Remove failed");
-    await loadCustomBlocks();
-  } catch (e) {
-    alert("Failed to remove: " + e.message);
-  }
-}
-
 // ─── Deity-presence safety net ────────────────────────────────────────────────
 function ensureDeityPresent(html, facts, productTitle) {
   if (!facts || !facts.deity || !html) return html;
@@ -1063,14 +1588,13 @@ function stripTruncatedTrailingTag(html) {
 }
 
 // ─── Heading suffix-drift safety net ──────────────────────────────────────
-// Mirrors server.js exactly. The model has been observed appending a
-// repeated keyword-tag suffix to EVERY <h2>/<h3> heading in the body (e.g.
-// "Who Should Wear 4 Mukhi Rudraksha | X-Ray Certified | Nepal Origin |
-// RKRTL Authenticated") instead of just the section title — likely
-// drifting from the meta title's own pipe-separated format. That phrase
-// belongs only in the meta title field, never repeated across every body
-// heading — reads as spam. Strips any trailing pipe-separated suffix
-// (2+ pipes) from h2/h3 heading text.
+// The model has been observed appending a repeated keyword-tag suffix to
+// EVERY <h2>/<h3> heading in the body (e.g. "Who Should Wear 4 Mukhi
+// Rudraksha | X-Ray Certified | Nepal Origin | RKRTL Authenticated") instead
+// of just the section title — likely drifting from the meta title's own
+// pipe-separated format. That phrase belongs only in the meta title field,
+// never repeated across every body heading — reads as spam. Strips any
+// trailing pipe-separated suffix (2+ pipes) from h2/h3 heading text.
 function stripHeadingSuffixes(html) {
   if (!html) return html;
   return html.replace(/(<h[23][^>]*>)([\s\S]*?)(<\/h[23]>)/gi, (match, openTag, inner, closeTag) => {
@@ -1083,451 +1607,10 @@ function stripHeadingSuffixes(html) {
   });
 }
 
-// ─── Init ─────────────────────────────────────────────────────────────────────
-window.addEventListener("DOMContentLoaded", () => {
-  document.getElementById("proxyUrl").value = PROXY_URL;
-  checkConnectionWithRetry();
-  renderSeasonalPanel();
-});
-
-// ─── Tabs ─────────────────────────────────────────────────────────────────────
-function switchTab(tab) {
-  ["seo","rank","cann","priority","options"].forEach(t => {
-    document.getElementById("pane-" + t).classList.toggle("hidden", t !== tab);
-    document.getElementById("tab-"  + t).classList.toggle("active",  t === tab);
-  });
-  if (tab === "rank" && isConnected) loadRankData();
+// ─── SEO Pipeline ─────────────────────────────────────────────────────────────
+function cleanAIOutput(text) {
+  return text.replace(/^```(?:html)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
 }
-
-// ─── Connection ───────────────────────────────────────────────────────────────
-async function checkConnectionWithRetry(attempts = 4, delayMs = 3000) {
-  for (let i = 0; i < attempts; i++) {
-    const ok = await checkConnection();
-    if (ok) return;
-    if (i < attempts - 1) {
-      if (i === 0) document.getElementById("connectionStatus").innerHTML = `<span class="status-dot"></span><span style="color:var(--gold);font-size:12px">⏳ Waking up server…</span>`;
-      await new Promise(r => setTimeout(r, delayMs));
-    }
-  }
-  setConnected(false);
-}
-
-async function checkConnection() {
-  try {
-    const res = await fetch(PROXY_URL + "/", { cache: "no-store" });
-    const data = await res.json();
-    if (data.tokenConfigured) { setConnected(true); loadProducts(); return true; }
-    setConnected(false); return false;
-  } catch (e) { return false; }
-}
-
-function setConnected(connected) {
-  isConnected = connected;
-  document.getElementById("statusDot").className = "status-dot" + (connected ? " connected" : "");
-  document.getElementById("connectionStatus").innerHTML = `<span class="status-dot${connected ? ' connected' : ''}"></span>${connected ? "Connected — d59207-af.myshopify.com" : "Not connected"}`;
-  document.getElementById("connectBtn").textContent   = connected ? "Reconnect" : "Connect";
-  document.getElementById("refreshBtn").style.display = connected ? "inline-block" : "none";
-  document.getElementById("connectPrompt").classList.toggle("hidden", connected);
-  document.getElementById("mainUI").classList.toggle("hidden", !connected);
-}
-
-// ─── Products ─────────────────────────────────────────────────────────────────
-async function loadProducts() {
-  try {
-    const res  = await fetch(PROXY_URL + "/products");
-    const data = await res.json();
-    products   = (data.products || []).filter(p => p.status === "active");
-    const sel  = document.getElementById("productSelect");
-    sel.innerHTML = `<option value="">— Select a product (${products.length} active) —</option>`;
-    products.forEach(p => { const opt = document.createElement("option"); opt.value = p.id; opt.textContent = p.title; sel.appendChild(opt); });
-  } catch (e) { console.error("Load products failed:", e); }
-}
-
-function onProductChange() {
-  const id = document.getElementById("productSelect").value;
-  selectedProduct = products.find(p => String(p.id) === id) || null;
-  document.getElementById("runBtn").disabled = !selectedProduct;
-  resetUI();
-
-  const badge   = document.getElementById("thinBadge");
-  const warning = document.getElementById("thinWarning");
-  const svcBadge = document.getElementById("serviceBadge");
-  const originBadge = document.getElementById("originBadge");
-  const originWarning = document.getElementById("originWarning");
-  const notStockedWarning = document.getElementById("notStockedWarning");
-  const kBadge = document.getElementById("karungaliBadge");
-  const sBadge = document.getElementById("sphatikBadge");
-  const tBadge = document.getElementById("tulsiBadge");
-  const previewSpecsBtn = document.getElementById("previewSpecsBtn");
-  const pushSpecsBtn = document.getElementById("pushSpecsBtn");
-  const pushCustomBlockBtn = document.getElementById("pushCustomBlockBtn");
-  const refreshCustomBlocksBtn = document.getElementById("refreshCustomBlocksBtn");
-  const quickSpecsPreview = document.getElementById("quickSpecsPreview");
-  quickSpecsPreview.classList.add("hidden");
-  quickSpecsPreview.innerHTML = "";
-  pushSpecsBtn.disabled = true;
-  pushSpecsBtn.textContent = "⚡ Push Quick Specs Only (non-destructive)";
-  pushSpecsBtn.style.background = ""; pushSpecsBtn.style.color = "";
-  document.getElementById("customBlocksList").innerHTML = "";
-  document.getElementById("customBlockLabel").value = "";
-  document.getElementById("customBlockHeading").value = "";
-  document.getElementById("customBlockText").value = "";
-
-  if (!selectedProduct) {
-    badge.style.display = "none"; warning.classList.add("hidden"); svcBadge.classList.add("hidden");
-    originBadge.classList.add("hidden"); originWarning.classList.add("hidden"); notStockedWarning.classList.add("hidden");
-    if (kBadge) kBadge.classList.add("hidden");
-    if (sBadge) sBadge.classList.add("hidden");
-    if (tBadge) tBadge.classList.add("hidden");
-    previewSpecsBtn.disabled = true;
-    pushCustomBlockBtn.disabled = true;
-    refreshCustomBlocksBtn.disabled = true;
-    return;
-  }
-
-  const isSvc = isServiceProduct(selectedProduct);
-  const isKar = !isSvc && isKarungaliProduct(selectedProduct);
-  const isSph = !isSvc && !isKar && isSphatikProduct(selectedProduct);
-  const isTul = !isSvc && !isKar && !isSph && isTulsiProduct(selectedProduct);
-  const isBead = !isSvc && !isKar && !isSph && !isTul;
-  svcBadge.classList.toggle("hidden", !isSvc);
-  if (kBadge) kBadge.classList.toggle("hidden", !isKar);
-  if (sBadge) sBadge.classList.toggle("hidden", !isSph);
-  if (tBadge) tBadge.classList.toggle("hidden", !isTul);
-
-  // Quick Specs / Pricing tables apply to physical products only, not services.
-  previewSpecsBtn.disabled = isSvc;
-
-  // Custom Promotional Blocks apply to any product type, including services.
-  pushCustomBlockBtn.disabled = false;
-  refreshCustomBlocksBtn.disabled = false;
-  loadCustomBlocks();
-
-  originBadge.classList.add("hidden");
-  originWarning.classList.add("hidden");
-  notStockedWarning.classList.add("hidden");
-  if (isBead) {
-    const isMalaProd = isMalaProduct(selectedProduct.title);
-    const origin = resolveOrigin(selectedProduct.title, isMalaProd);
-    if (!origin) {
-      originWarning.classList.remove("hidden");
-    } else if (origin.notStocked) {
-      notStockedWarning.classList.remove("hidden");
-    } else {
-      originBadge.textContent = `🌍 ${origin.metaShort}${isMalaProd ? " (mala)" : ""}`;
-      originBadge.classList.remove("hidden");
-    }
-  }
-
-  const wordCount = (selectedProduct.body_html || "").replace(/<[^>]+>/g, "").split(/\s+/).filter(Boolean).length;
-  badge.style.display = "inline-block";
-  if (wordCount >= 300) { badge.className = "thin-badge thin-rich"; badge.textContent = `✓ Rich (${wordCount} words)`; warning.classList.add("hidden"); }
-  else if (wordCount >= 100) { badge.className = "thin-badge thin-ok"; badge.textContent = `~ OK (${wordCount} words)`; warning.classList.add("hidden"); }
-  else { badge.className = "thin-badge thin-thin"; badge.textContent = `⚠ Thin (${wordCount} words)`; warning.classList.remove("hidden"); }
-}
-
-// ─── Agent helpers ────────────────────────────────────────────────────────────
-function setAgent(id, state, msg) {
-  const el = document.getElementById("agent-" + id);
-  if (!el) return;
-  el.className = "agent-card" + (state === "running" ? " running" : state === "done" ? " done" : state === "error" ? " error" : "");
-  el.querySelector(".agent-status").innerHTML = state === "running" ? `<span class="spinner"></span><span class="pulse">${msg}</span>` : msg;
-}
-function resetAgents() { ["research","keywords","gaps","desc","title","metadesc","tags","faq","schema"].forEach(id => setAgent(id, "", "Waiting…")); }
-
-// ─── Main pipeline ────────────────────────────────────────────────────────────
-async function runAllAgents() {
-  if (!selectedProduct) return;
-  const runBtn = document.getElementById("runBtn");
-  runBtn.disabled = true; runBtn.textContent = "Running…";
-  resetAgents();
-  document.getElementById("scoreSection").classList.remove("hidden");
-  document.getElementById("compSection").classList.remove("hidden");
-  document.getElementById("resultsSection").classList.add("hidden");
-  document.getElementById("compList").innerHTML = "";
-  document.getElementById("gapSection").classList.add("hidden");
-  document.getElementById("kwSection").classList.add("hidden");
-  document.getElementById("sgeScoreWrap").classList.add("hidden");
-  generatedFAQs = [];
-
-  const isService   = isServiceProduct(selectedProduct);
-  const isKarungali = !isService && isKarungaliProduct(selectedProduct);
-  const isSphatik   = !isService && !isKarungali && isSphatikProduct(selectedProduct);
-  const isTulsi     = !isService && !isKarungali && !isSphatik && isTulsiProduct(selectedProduct);
-  const isBead      = !isService && !isKarungali && !isSphatik && !isTulsi;
-  console.log(`Product type: ${isService ? "🛕 SERVICE" : isKarungali ? "🪵 KARUNGALI" : isSphatik ? "💎 SPHATIK" : isTulsi ? "🌿 TULSI" : "📿 BEAD/PRODUCT"}`);
-
-  document.getElementById("eeAtBadge").textContent = isService
-    ? "✦ MVS Vedapadasala · Ghana Parayana · Kanchi Mutt VRNT · Feb 2026 Google E-E-A-T compliant"
-    : isKarungali
-    ? "✦ Karungali (Diospyros ebenum) · Authentic Ebony Wood · Tamil Nadu Heritage · Shaiva Siddhanta Tradition"
-    : isSphatik
-    ? "✦ Sphatik (natural rock crystal) · Refractive Index / Mohs Hardness Verified · Vedic Purity Tradition"
-    : isTulsi
-    ? "✦ Tulsi (Ocimum tenuiflorum) · Vaishnava Devotional Tradition · No authentication method claimed"
-    : "✦ Intent-based E-E-A-T expression · GMC-safe · No deity names in titles/headings · Feb 2026 Google update compliant";
-
-  const before = scoreSEO(selectedProduct.metafields_global_title_tag, selectedProduct.metafields_global_description_tag, selectedProduct.tags, selectedProduct.body_html, isService, isKarungali, isSphatik, isTulsi);
-  showScore("scoreBefore", before);
-
-  try {
-    // Agent 1: Competitor research
-    setAgent("research", "running", "Fetching competitors…");
-    const compRes  = await fetch(PROXY_URL + "/competitor/research", {
-      method: "POST", headers: {"Content-Type":"application/json"},
-      body: JSON.stringify({ productTitle: selectedProduct.title }),
-    });
-    const compData = await compRes.json();
-    const competitors = compData.competitors || [];
-    document.getElementById("compCount").textContent = `${competitors.length} pages found`;
-    renderCompetitors(competitors);
-    setAgent("research", "done", `✓ ${competitors.length} pages`);
-
-    // Agent 2: Keyword extraction
-    setAgent("keywords", "running", "Extracting keywords…");
-    let extractedKeywords = { h1: [], h2h3: [], phrases: [] };
-    let keywordBrief = "";
-    if (competitors.length > 0) {
-      const compHeadingInput = competitors.map((c, i) => {
-        const headings = c.headings || {};
-        return `Competitor ${i+1} (${c.url}):\nH1: ${(headings.h1||[]).slice(0,3).join(" | ") || "none"}\nH2/H3: ${(headings.h2h3||[]).slice(0,6).join(" | ") || "none"}\nBody: ${(c.content||c.snippet||"").slice(0,400)}`;
-      }).join("\n\n---\n\n");
-
-      const kwCall = () => aiGenerate(
-        `You are an SEO keyword analyst. Output ONLY valid JSON. No markdown. No explanation.`,
-        `Extract SEO keywords from these ${competitors.length} competitor pages for "${selectedProduct.title}" on RudraKailash.com.\n\n${compHeadingInput}\n\nExtract:\n1. h1Keywords: Primary keywords from competitor H1 tags (max 8, exact phrases)\n2. h2h3Keywords: Sub-topic LSI keywords from H2/H3 headings (max 12, exact phrases)\n3. intentPhrases: Recurring long-tail intent phrases from body text across 2+ competitors (max 10)\n\nOutput ONLY:\n{"h1":["phrase1"],"h2h3":["phrase1"],"phrases":["phrase1"]}`, 1500
-      );
-      let kwRaw = "";
-      try {
-        kwRaw = await withTimeout(kwCall(), 25000, "Keyword extraction");
-      } catch(e1) {
-        console.warn("Keyword extraction attempt 1 failed:", e1.message, "— retrying…");
-        setAgent("keywords", "running", "Retrying keywords…");
-        try {
-          kwRaw = await withTimeout(kwCall(), 25000, "Keyword extraction retry");
-        } catch(e2) {
-          console.warn("Keyword extraction attempt 2 failed:", e2.message, "— continuing without keywords");
-          kwRaw = "";
-        }
-      }
-      try {
-        extractedKeywords = JSON.parse(extractJsonValue(kwRaw));
-      } catch(e) {
-        console.warn("Keyword JSON parse failed:", e.message, "— raw response (first 300 chars):", kwRaw.slice(0, 300));
-      }
-    }
-    renderKeywords(extractedKeywords);
-    const totalKw = (extractedKeywords.h1||[]).length + (extractedKeywords.h2h3||[]).length + (extractedKeywords.phrases||[]).length;
-    setAgent("keywords", "done", totalKw > 0 ? `✓ ${totalKw} keywords` : "✓ No keywords");
-
-    if (totalKw > 0) {
-      const kw = extractedKeywords;
-      keywordBrief = [
-        (kw.h1||[]).length    ? `H1 PRIMARY KEYWORDS: ${(kw.h1||[]).slice(0,5).join(" / ")}` : "",
-        (kw.h2h3||[]).length  ? `H2/H3 SUB-TOPIC KEYWORDS: ${(kw.h2h3||[]).slice(0,8).join(", ")}` : "",
-        (kw.phrases||[]).length ? `LONG-TAIL INTENT PHRASES: ${(kw.phrases||[]).slice(0,8).join(", ")}` : "",
-      ].filter(Boolean).join("\n");
-    }
-
-    // Agent 3: Gap analysis
-    setAgent("gaps", "running", "Identifying gaps…");
-    let gaps = [], gapSummary = "Cover all key topics comprehensively.";
-    if (competitors.length > 0) {
-      const compTexts = competitors.map((c,i) => `Competitor ${i+1}:\n${(c.content||c.snippet||"").slice(0,500)}`).join("\n---\n");
-      const descPlain0 = (selectedProduct.body_html||"").replace(/<[^>]+>/g,"").slice(0,400);
-      const gapCall = () => aiGenerate(
-        `SEO content strategist. Output ONLY a JSON array of strings. No explanation, no markdown.`,
-        `Product: "${selectedProduct.title}". Our description: "${descPlain0}". Competitors:\n${compTexts}\nIdentify 5-8 content gaps. Output ONLY JSON array.`, 700
-      );
-      let gapRes = "";
-      try {
-        gapRes = await withTimeout(gapCall(), 25000, "Gap analysis");
-      } catch(e1) {
-        console.warn("Gap analysis attempt 1 failed:", e1.message, "— retrying…");
-        setAgent("gaps", "running", "Retrying gap analysis…");
-        try {
-          gapRes = await withTimeout(gapCall(), 25000, "Gap analysis retry");
-        } catch(e2) {
-          console.warn("Gap analysis attempt 2 failed:", e2.message, "— continuing without gaps");
-          gapRes = "";
-        }
-      }
-      try { gaps = JSON.parse(extractJsonValue(gapRes)); } catch(e) { console.warn("Gap analysis JSON parse failed:", e.message, "— raw response (first 300 chars):", gapRes.slice(0, 300)); }
-      gapSummary = gaps.length > 0 ? `Fill these gaps: ${gaps.join("; ")}` : gapSummary;
-    }
-    renderGaps(gaps);
-    setAgent("gaps", "done", gaps.length > 0 ? `✓ ${gaps.length} gaps` : "✓ No gaps");
-
-    const descPlain  = (selectedProduct.body_html||"").replace(/<[^>]+>/g,"").slice(0,400);
-    const isMalaProd = isMalaProduct(selectedProduct.title);
-    const origin = isBead ? resolveOrigin(selectedProduct.title, isMalaProd) : null;
-    const originBlock = buildOriginBlock(origin);
-    const mukhiFacts = isBead ? getMukhiFacts(selectedProduct.title) : null;
-    const mukhiFactsBlock = buildMukhiFactsBlock(mukhiFacts);
-    const anchorItems = isBead ? getAnchorContent(selectedProduct.title) : [];
-    const anchorContentBlock = isBead ? buildAnchorContentBlock(anchorItems) : "";
-    const selfContainedRule = `SELF-CONTAINED SENTENCE RULE (critical for AI/GEO extraction — this determines whether a passage can be lifted into an AI-generated answer): every bullet and every sentence must pass this test — read alone, with no heading and no surrounding text, does it still make complete sense? Concretely: (1) never open a bullet with a bare fragment like "Ruled by Shani (Saturn)…" — give it an explicit subject, e.g. "${selectedProduct.title} is traditionally associated with Shani (Saturn)…"; (2) never start a bullet with a bare pronoun ("It…", "This…") with no stated antecedent in the same sentence — restate the product name or "this bead"/"this mala" instead; (3) each bullet must read as a complete, standalone claim understandable with zero prior context, not a continuation of the heading above it.`;
-    const kwPlacement = keywordBrief
-      ? `MANDATORY KEYWORD PLACEMENT:\n${keywordBrief}\n\nRULES:\n- <h2>: include a H1 PRIMARY KEYWORD\n- Opening <p>: include H1 keyword within first 60 words\n- <h3> headings: use H2/H3 KEYWORDS naturally\n- Bullets: address LONG-TAIL INTENT PHRASES as experience statements\n- FAQ: word 2+ questions using exact LONG-TAIL INTENT PHRASE phrasing\n\n${selfContainedRule}`
-      : `Use standard SEO keywords appropriate to this product/service.\n\n${selfContainedRule}`;
-
-    const descSystem = isService
-      ? `You are a Vedic services SEO expert for RudraKailash.com. Write service page descriptions. Rules: keyword in first <h2> and opening <p>; cite MVS Vedapadasala vadhyar credentials and Kanchi Mutt VRNT achievement; NEVER mention Rudraksha beads, RKRTL certification, or X-ray testing — this is a SERVICE not a physical product. DEPTH RULE (mandatory, applies specifically to "Who Should Book" below): this section is a deep-dive section, not shallow one-line bullets — each bullet gets a bold lead-in label plus 2-3 full sentences of genuine substance. All other sections stay concise. HEADING TEXT RULE (mandatory): Every <h2> and <h3> heading must contain ONLY its own section title — nothing appended after it. Do NOT copy or repeat the meta title's pipe-separated format (e.g. "| X-Ray Certified | Nepal Origin | RKRTL Authenticated") into body headings; that format belongs exclusively to the meta title field and must never appear inside body_html. Correct: "<h3>Who Should Book ${selectedProduct.title}</h3>". Violation — never produce this: "<h3>Who Should Book ${selectedProduct.title} | X-Ray Certified | Nepal Origin | RKRTL Authenticated</h3>". Output clean HTML only. No markdown.`
-      : isKarungali
-      ? `You are a sacred wood jewellery SEO expert for RudraKailash.com. Write Karungali Ebony wood product descriptions. Rules: keyword in first <h2> and opening <p> within 100 words; cite Diospyros ebenum botanical name, Shaiva Siddhanta tradition, Tamil Nadu heritage; STRICT — NO X-ray testing, NO RKRTL certification language, NO Elaeocarpus ganitrus — Karungali is authenticated by wood grain, density and species identification NOT X-ray imaging. DEPTH RULE (mandatory, applies specifically to "What Seekers Experience" and "Who Should Wear" below): these two sections are deep-dive sections, not shallow one-line bullets — each bullet gets a bold lead-in label plus 2-3 full sentences of genuine substance. All other sections: MAX 4 lines prose, or use <ul> if more. Keep total description under 850 words (higher than typical, intentionally, to accommodate the two deep-dive sections). HEADING TEXT RULE (mandatory): Every <h2> and <h3> heading must contain ONLY its own section title — nothing appended after it. Do NOT copy or repeat the meta title's pipe-separated format (e.g. "| X-Ray Certified | Nepal Origin | RKRTL Authenticated") into body headings; that format belongs exclusively to the meta title field and must never appear inside body_html. Correct: "<h3>Who Should Wear ${selectedProduct.title}</h3>". Violation — never produce this: "<h3>Who Should Wear ${selectedProduct.title} | X-Ray Certified | Nepal Origin | RKRTL Authenticated</h3>". Output clean HTML only. No markdown.`
-      : isSphatik
-      ? `You are a crystal/gemstone SEO expert for RudraKailash.com. Write Sphatik (natural rock crystal) product descriptions. Rules: keyword in first <h2> and opening <p> within 100 words; Sphatik is natural rock crystal (clear quartz, chemically silicon dioxide), associated in Vedic tradition with Goddess Lakshmi and the Moon (Chandra); STRICT — NO X-ray testing, NO RKRTL X-ray certification language, NO Elaeocarpus ganitrus, NO "mukhi" or face-count language of any kind — Sphatik is a mineral, not a seed. Authentication is by refractive index testing and/or Mohs hardness testing (natural quartz = 7 on the Mohs scale; the main fraud risk is glass sold as Sphatik, both optically and mechanically softer) — name this method directly and factually, not hedged, since it is a verifiable physical test. DEPTH RULE (mandatory, applies specifically to "What Seekers Experience" and "Who Should Wear" below): these two sections are deep-dive sections, not shallow one-line bullets — each bullet gets a bold lead-in label plus 2-3 full sentences of genuine substance. All other sections: MAX 4 lines prose, or use <ul> if more. Keep total description under 850 words. HEADING TEXT RULE (mandatory): Every <h2> and <h3> heading must contain ONLY its own section title — nothing appended after it. Do NOT copy or repeat the meta title's pipe-separated format (e.g. "| X-Ray Certified | Nepal Origin | RKRTL Authenticated") into body headings; that format belongs exclusively to the meta title field and must never appear inside body_html. Correct: "<h3>Who Should Wear ${selectedProduct.title}</h3>". Violation — never produce this: "<h3>Who Should Wear ${selectedProduct.title} | X-Ray Certified | Nepal Origin | RKRTL Authenticated</h3>". Output clean HTML only. No markdown.`
-      : isTulsi
-      ? `You are a Vedic jewellery SEO expert for RudraKailash.com. Write Tulsi (Holy Basil) mala product descriptions. Rules: keyword in first <h2> and opening <p> within 100 words; Tulsi (botanical name Ocimum tenuiflorum) is sacred to Lord Vishnu and Krishna in Vaishnava tradition. CRITICAL — RudraKailash does not currently have an established, verifiable authentication/testing method for Tulsi. DO NOT invent, imply, or reference any authentication process, testing method, certificate, or verification claim — no RKRTL, no "certified," no "verified authentic," no "tested." Describe sourcing honestly and modestly instead. NO X-ray, NO RKRTL, NO Elaeocarpus ganitrus, NO mukhi language — Tulsi is a different plant genus entirely. DEPTH RULE (mandatory, applies specifically to "What Seekers Experience" and "Who Should Wear" below): these two sections are deep-dive sections, not shallow one-line bullets — each bullet gets a bold lead-in label plus 2-3 full sentences of genuine substance. All other sections: MAX 4 lines prose, or use <ul> if more. Keep total description under 850 words. HEADING TEXT RULE (mandatory): Every <h2> and <h3> heading must contain ONLY its own section title — nothing appended after it. Do NOT copy or repeat the meta title's pipe-separated format (e.g. "| X-Ray Certified | Nepal Origin | RKRTL Authenticated") into body headings; that format belongs exclusively to the meta title field and must never appear inside body_html. Correct: "<h3>Who Should Wear ${selectedProduct.title}</h3>". Violation — never produce this: "<h3>Who Should Wear ${selectedProduct.title} | X-Ray Certified | Nepal Origin | RKRTL Authenticated</h3>". Output clean HTML only. No markdown.`
-      : `You are a Rudraksha SEO expert for RudraKailash.com. Rules:
-- Keyword in first <h2> and first <p> within 100 words
-- E-E-A-T framing ("seekers describe…" / "seekers report…") — ZERO direct health or spiritual benefit claims
-- Cite the correct botanical species name for this specific product at least once (see SPECIES block in the user message below — do not assume Elaeocarpus ganitrus by default, some products are a verified different species)
-- Mention RKRTL as independent X-ray authentication lab
-- Output clean HTML only. No markdown.
-LOCKED DEFINITION (mandatory): On first mention of RKRTL anywhere in the output, write it in full exactly as "RKRTL (Kailasha Rudraksha Testing Laboratory)" — this exact string, never paraphrased, never re-expanded, never given an alternate name. Every subsequent mention in the same output may use "RKRTL" alone. Never introduce any other expansion of the acronym in any output, ever.
-OPENING PARAGRAPH ORDER (mandatory — purchase-intent page, not an encyclopedia entry): (1) lead with the primary traditional use-case or astrological remedy driving the purchase — never lead with species/botanical identification; (2) state certification per the LOCKED DEFINITION rule; (3) origin/species/structural detail comes last, as evidence for the certification claim. BANNED opening pattern: "The [N] Mukhi Rudraksha is a [N]-faced bead from the Elaeocarpus ganitrus tree…" — do not use this or close variants.
-ORIGIN RULE (mandatory — read carefully, this varies per product and is supplied per-request in the user message below, NOT a fixed site-wide default): the VERIFIED ORIGIN block in the user message states the one correct origin claim for THIS specific product. Use that exact origin consistently everywhere origin is mentioned — intro, meta fields, tags, FAQ. Different products on this site legitimately have different origins (Nepal, South India, Haridwar/Uttarakhand, or Indonesia depending on mukhi count, shape, and whether it's a single bead or mala) — never assume Nepal as a universal default, and never introduce an origin not stated in that block.
-SPECIES RULE (mandatory — same principle as ORIGIN RULE above): the SPECIES field in the VERIFIED ORIGIN block states the one correct botanical species for THIS specific product. Most Rudraksha on this site are Elaeocarpus ganitrus, but not all — the 1 Mukhi Half-Moon (Chandrakar) is Elaeocarpus tuberculatus, a genuinely different species, disclosed transparently rather than glossed over. Never assume Elaeocarpus ganitrus as a universal default; always use the exact species stated in that block, including in the RKRTL Authentication/Certification section.
-EVIDENCE REQUIREMENT for hedged/experience sections: every "seekers report/describe" bullet must anchor to one named specific in the same sentence — a scripture, mantra, planetary period, or chakra. A hedge with no named specific attached (e.g. "seekers report enhanced focus" alone) is not acceptable output.
-MEASUREMENT ACCURACY RULE (mandatory): Never state a specific bead size (mm) or weight (grams) as fact anywhere in the output — intro, bullets, or FAQ — unless that exact figure is present in the product's current description passed to you. Nothing in this pipeline feeds real Shopify variant data into this prompt, so any size/weight you generate is invented, not accurate, and risks contradicting the actual variant the customer selects. If no size/weight is available, omit specific measurements entirely and let the product's variant selector convey size instead.
-VERIFIED ANCHOR CONTENT RULE (mandatory — distinct from VERIFIED MUKHI FACTS above): the VERIFIED ANCHOR CONTENT block in the user message contains real, confirmed operational/testing facts specific to this product or universal to all Rudraksha products (exact screening steps, measurement methods, verification process). These exist specifically to break the repetitive "seekers traditionally associate/report/describe" template pattern that recurs identically across every product page — Google's 2026 core updates specifically target this kind of cosmetic-variation-only content at catalog scale. Weave the supplied anchor content into the RKRTL Authentication section (or a short additional section immediately after it) as factual, non-hedged prose — do NOT wrap these in "seekers report" language, since they are verifiable process claims, not belief claims. If the block states no anchor content was supplied, do not invent a substitute — proceed without that passage.
-GMC IDENTITY & BELIEF POLICY RULES (critical — violations cause ad restrictions):
-- NEVER use deity names (Shiva, Vishnu, Ganesha, Hanuman, Lakshmi, Durga, Parvati, Brahma, Indra, etc.) in H1, H2, or H3 headings
-- NEVER use deity names in the opening paragraph (first <p> tag)
-- Deity associations belong ONLY inside body <ul> bullets, never in headings or opening prose
-- CRITICAL CLARIFICATION ON DEITY NAMING (read carefully — this is where the model has previously failed): a hedged, traditionally-framed sentence that includes a deity's name IS compliant and IS required. It is NOT the same thing as a banned direct benefit claim. Do not omit a required deity name out of excess caution, especially for deities traditionally associated with wealth, love, or other benefits (e.g. Goddess Mahalakshmi, Kamadeva) — naming them is fine; asserting a guaranteed outcome is not. COMPLIANT (do this): "Seekers traditionally associate the 7 Mukhi with Goddess Mahalakshmi and report keeping it in a cash box or wearing it to support financial stability during difficult periods." NON-COMPLIANT (do not write this): "This bead pleases Goddess Mahalakshmi and attracts wealth and money." The difference is hedging language ("seekers traditionally associate / report") and avoiding absolute guarantees — not the presence or absence of the deity's name itself.
-- NEVER write direct spiritual benefit claims like "attracts wealth", "removes negativity", "pleases Lord Shiva", "blesses the wearer" — use "seekers report…" framing only
-- Position the product as a natural, scientifically authenticated seed bead — not a religious item
-- "Mala" in headings should be accompanied by material/size descriptors to read as jewelry, not prayer beads
-AI-CITATION (GEO) RULES — applies ONLY to the RKRTL Authentication section, NEVER to belief/benefit sections above:
-- The "seekers report…" hedging rule above is for spiritual/wellness claims ONLY. The RKRTL Authentication section is a factual, verifiable process claim, not a belief claim, write it in direct, declarative language with zero hedging ("RKRTL confirms…", not "seekers report RKRTL confirms…")
-- Name the specific process: three-view X-ray imaging (raw, edge-enhanced, and inverse) plus microscopic verification — both are confirmed, real steps in the RKRTL process, so name them directly rather than using vague phrases like "advanced testing"
-- Reference the certificate system by name (unique certificate ID, verifiable at rkrtl.com/verify) rather than vaguely stating "a certificate is issued"
-HEADING TEXT RULE (mandatory): Every <h2> and <h3> heading must contain ONLY its own section title — nothing appended after it. Do NOT copy or repeat the meta title's pipe-separated format (e.g. "| X-Ray Certified | Nepal Origin | RKRTL Authenticated") into body headings; that format belongs exclusively to the meta title field and must never appear inside body_html. Correct: "<h3>Who Should Wear ${selectedProduct.title}</h3>". Violation — never produce this: "<h3>Who Should Wear ${selectedProduct.title} | X-Ray Certified | Nepal Origin | RKRTL Authenticated</h3>".
-DEPTH RULE (mandatory, applies specifically to "Traditional Benefits" and "Who Should Wear" below): these two sections are deep-dive sections, not shallow one-line bullets — each bullet gets a bold lead-in label plus 2-3 full sentences of genuine substance, still hedged per the rules above. All other sections stay concise: MAX 4 lines of prose, or a <ul> if more structure helps. Keep total description under 900 words (higher than typical, intentionally, to accommodate the two deep-dive sections).`;
-
-    const descUser = isService
-      ? `Write a concise SEO service page for "${selectedProduct.title}" by RudraKailash.com.\n\nSERVICE CONTEXT:\n- Performed by: MVS Vedapadasala vadhyars, Coimbatore\n- Ghana Parayana tradition\n- Vadhyars Bhadrinath, Akshai Jayaraman, Harish — 1st place in VRNT exam by Kanchi Mutt\n- Online service: customer books → vadhyars perform → video/photo documentation sent\n- Real padashaala, not studio\n\nSTRUCTURE:\n<h2>${selectedProduct.title} — Online Vedic Service by MVS Vedapadasala</h2>\n<p>[2–3 sentences: what this service is, who performs it, spiritual purpose]</p>\n<h3>Vedic Significance of ${selectedProduct.title}</h3>\n[MAX 4 lines: deity invoked, scriptural basis, spiritual purpose]\n<h3>What You Receive — Complete Inclusions</h3>\n<ul>[4–5 bullets: trained vadhyar performance, video/photo documentation, personalised sankalpa, date flexibility]</ul>\n<h3>Performed by MVS Vedapadasala — Authentic Coimbatore Vadhyars</h3>\n[2–3 lines: Ghana Parayana training, Kanchi Mutt VRNT 1st place achievement, real padashaala not studio]\n<h3>Who Should Book ${selectedProduct.title}</h3>\n<ul>[4–5 bullets, DEEP-DIVE FORMAT: each bullet is <li><strong>[3-6 word devotee-profile label]:</strong> [2-3 full sentences, ~35-55 words, describing the life situation or need and why this service fits it]</li> — ideal devotee profiles, e.g. "Those seeking…", "Families facing…"]</ul>\n<h3>How to Book Your ${selectedProduct.title}</h3>\n<ul>[4 bullets: step-by-step booking process]</ul>\n<h3>Frequently Asked Questions</h3>\n[4 FAQs covering: how online service works, vadhyar credentials, what is delivered, booking/customisation. MANDATORY EXACT HTML TEMPLATE — repeat this block once per question, numbered 1-4; do NOT use <dl>/<dt>/<dd> tags, they render as an undifferentiated wall of text on this theme (no CSS styles them distinctly):\n<div style="margin-bottom:20px"><p style="font-weight:bold;margin:0 0 6px 0">1. [Question]</p><p style="margin:0">[Answer]</p></div>]\n\n${kwPlacement}\n\nGAPS TO COVER: ${gapSummary}\nCURRENT DESCRIPTION: ${descPlain}\n\nOUTPUT: Clean HTML only, starting with <h2>. NO bead/RKRTL/X-ray language.`
-      : isKarungali
-      ? `Write a concise SEO product description for "${selectedProduct.title}" on RudraKailash.com.\n\nMAIN KEYWORD: ${selectedProduct.title}\n\nPRODUCT CONTEXT:\n- Material: Karungali (Ebony) wood — botanical name Diospyros ebenum\n- Origin: Tamil Nadu, South India — Shaiva Siddhanta tradition\n- Authentication: visual grain pattern, wood density, species identification — NOT X-ray\n- Associated deity: Lord Shani (Saturn) — primary; also protection and grounding\n- Traditional use: Japa mala, daily wear, protection\n\nSTRUCTURE (follow exactly):\n<h2>${selectedProduct.title} — Authentic Karungali Ebony Wood from Tamil Nadu</h2>\n<p>[2–3 sentences: keyword in first sentence, material (Diospyros ebenum), significance — NO deity names here]</p>\n<h3>Significance of Karungali (Ebony) Wood in Shaiva Tradition</h3>\n[MAX 4 lines: Diospyros ebenum botanical name, Shaiva Siddhanta, Shani connection, Tamil Nadu heritage]\n<h3>What Seekers Experience with ${selectedProduct.title}</h3>\n<ul>[4–5 bullets, DEEP-DIVE FORMAT: each bullet is <li><strong>[3-6 word benefit-topic label]:</strong> [2-3 full sentences, ~35-55 words, hedged with "seekers report/describe" — never a direct claim]</li> — covering grounding, focus, protection, Shani remediation]</ul>\n<h3>How Karungali Wood is Authenticated at RudraKailash</h3>\n[2–3 lines: species identification by grain pattern and wood density, Diospyros ebenum confirmed, certified artisan sourcing — NO X-ray, NO RKRTL]\n<h3>Who Should Wear ${selectedProduct.title}</h3>\n<ul>[4–5 bullets, DEEP-DIVE FORMAT: each bullet is <li><strong>[3-6 word seeker-profile label]:</strong> [2-3 full sentences, ~35-55 words]</li> — seeker profiles: Shani Mahadasha, Saturn transit, grounding, daily japa]</ul>\n<h3>How to Use Your ${selectedProduct.title} — Wearing and Care</h3>\n<ul>[4–5 bullets: begin on Saturday, Om Sham Shanicharaya Namah, no oil, store dry, avoid water]</ul>\n<h3>Frequently Asked Questions</h3>\n[4 FAQs covering: what is karungali wood, Shani connection, care instructions, how authenticity is verified. MANDATORY EXACT HTML TEMPLATE — repeat this block once per question, numbered 1-4; do NOT use <dl>/<dt>/<dd> tags, they render as an undifferentiated wall of text on this theme (no CSS styles them distinctly):\n<div style="margin-bottom:20px"><p style="font-weight:bold;margin:0 0 6px 0">1. [Question]</p><p style="margin:0">[Answer]</p></div>]\n\n${kwPlacement}\n\nGAPS TO COVER: ${gapSummary}\nCURRENT DESCRIPTION: ${descPlain}\n\nOUTPUT: Clean HTML only, starting with <h2>. CRITICAL: No RKRTL, no X-ray, no Elaeocarpus ganitrus — this is WOOD not Rudraksha.`
-      : isSphatik
-      ? `Write a concise SEO product description for "${selectedProduct.title}" on RudraKailash.com.\n\nMAIN KEYWORD: ${selectedProduct.title}\n\nPRODUCT CONTEXT:\n- Material: Sphatik — natural rock crystal (clear quartz, chemically silicon dioxide)\n- Associated deity/planet: Goddess Lakshmi and the Moon (Chandra) in Vedic tradition\n- Authentication: refractive index testing and/or Mohs hardness testing (natural quartz = 7 on the Mohs scale) — a real, verifiable physical test; state it directly and factually, no hedging\n- Traditional use: meditation, purity, clarity, often worn or kept alongside Rudraksha\n- Main fraud risk: glass sold as Sphatik, both optically and mechanically softer than genuine quartz — precisely what the hardness/refractive-index test distinguishes\n\nSTRUCTURE:\n<h2>${selectedProduct.title} — Natural Sphatik (Rock Crystal)</h2>\n<p>[2–3 sentences: keyword in first sentence, material (natural rock crystal / clear quartz), traditional significance, seeker hook — NO deity name here]</p>\n<h3>Significance of Sphatik in Vedic Tradition</h3>\n[MAX 4 lines: natural quartz identity, association with Goddess Lakshmi and Chandra, purity/clarity symbolism]\n<h3>What Seekers Experience with ${selectedProduct.title}</h3>\n<ul>[4–5 bullets, DEEP-DIVE FORMAT: each bullet is <li><strong>[3-6 word benefit-topic label]:</strong> [2-3 full sentences, ~35-55 words, hedged with "seekers report/describe" — never a direct claim]</li> — covering mental clarity, calm, purification]</ul>\n<h3>How Sphatik is Authenticated at RudraKailash</h3>\n[2–3 lines, DIRECT factual language, no hedging: refractive index and/or Mohs hardness testing (natural quartz = 7), distinguishing genuine crystal from glass imitations — NO X-ray, NO RKRTL, NO Elaeocarpus ganitrus]\n<h3>Who Should Wear ${selectedProduct.title}</h3>\n<ul>[4–5 bullets, DEEP-DIVE FORMAT: each bullet is <li><strong>[3-6 word seeker-profile label]:</strong> [2-3 full sentences, ~35-55 words]</li> — seeker profiles: those seeking clarity, calm, meditation practice]</ul>\n<h3>How to Use Your ${selectedProduct.title} — Wearing and Care</h3>\n<ul>[4–5 bullets: cleansing (e.g. moonlight, water), storage away from direct sunlight, handling with care as a natural mineral]</ul>\n<h3>Frequently Asked Questions</h3>\n[4 FAQs covering: what Sphatik is, how it's authenticated, who should wear it, care instructions. MANDATORY EXACT HTML TEMPLATE — repeat this block once per question, numbered 1-4; do NOT use <dl>/<dt>/<dd> tags, they render as an undifferentiated wall of text on this theme (no CSS styles them distinctly):\n<div style="margin-bottom:20px"><p style="font-weight:bold;margin:0 0 6px 0">1. [Question]</p><p style="margin:0">[Answer]</p></div>]\n\n${kwPlacement}\n\nGAPS TO COVER: ${gapSummary}\nCURRENT DESCRIPTION: ${descPlain}\n\nOUTPUT: Clean HTML only, starting with <h2>. CRITICAL: No RKRTL, no X-ray, no Elaeocarpus ganitrus, no mukhi/face-count language — this is a MINERAL not a Rudraksha bead.`
-      : isTulsi
-      ? `Write a concise SEO product description for "${selectedProduct.title}" on RudraKailash.com.\n\nMAIN KEYWORD: ${selectedProduct.title}\n\nPRODUCT CONTEXT:\n- Material: Tulsi (Holy Basil) — botanical name Ocimum tenuiflorum\n- Associated deity: Lord Vishnu and Krishna, Vaishnava tradition\n- Authentication: NONE ESTABLISHED — RudraKailash does not currently have a verified testing/authentication method for Tulsi. Do NOT invent, imply, or reference any certification, testing, or verification claim (no "RKRTL," no "certified," no "verified authentic," no "tested"). Describe sourcing plainly instead (e.g. "sourced from Tulsi plants") without attaching an unsupported verification claim.\n- Traditional use: japa mala, daily wear, Vaishnava devotional practice\n\nSTRUCTURE:\n<h2>${selectedProduct.title} — Sacred Tulsi (Holy Basil) Mala</h2>\n<p>[2–3 sentences: keyword in first sentence, material (Ocimum tenuiflorum / Holy Basil), traditional significance, seeker hook — NO deity name here, NO authentication/certification claim of any kind]</p>\n<h3>Significance of Tulsi in Vaishnava Tradition</h3>\n[MAX 4 lines: Ocimum tenuiflorum botanical name, Vishnu/Krishna association, devotional significance]\n<h3>What Seekers Experience with ${selectedProduct.title}</h3>\n<ul>[4–5 bullets, DEEP-DIVE FORMAT: each bullet is <li><strong>[3-6 word benefit-topic label]:</strong> [2-3 full sentences, ~35-55 words, hedged with "seekers report/describe" — never a direct claim]</li> — covering devotional focus, purity, daily practice support]</ul>\n<h3>Sourcing of ${selectedProduct.title}</h3>\n[2–3 lines: plainly describe sourcing (e.g. from Tulsi plants) — DO NOT claim any authentication, testing, or certification process, since none is currently established for this product]\n<h3>Who Should Wear ${selectedProduct.title}</h3>\n<ul>[4–5 bullets, DEEP-DIVE FORMAT: each bullet is <li><strong>[3-6 word seeker-profile label]:</strong> [2-3 full sentences, ~35-55 words]</li> — seeker profiles: Vaishnava devotees, daily japa practitioners]</ul>\n<h3>How to Use Your ${selectedProduct.title} — Wearing and Care</h3>\n<ul>[4–5 bullets: traditional wearing guidance, care — no chemicals, keep dry]</ul>\n<h3>Frequently Asked Questions</h3>\n[4 FAQs covering: what Tulsi mala is, its significance, who should wear it, care instructions. Do NOT include a question about authentication/certification, since none exists for this product. MANDATORY EXACT HTML TEMPLATE — repeat this block once per question, numbered 1-4; do NOT use <dl>/<dt>/<dd> tags, they render as an undifferentiated wall of text on this theme (no CSS styles them distinctly):\n<div style="margin-bottom:20px"><p style="font-weight:bold;margin:0 0 6px 0">1. [Question]</p><p style="margin:0">[Answer]</p></div>]\n\n${kwPlacement}\n\nGAPS TO COVER: ${gapSummary}\nCURRENT DESCRIPTION: ${descPlain}\n\nOUTPUT: Clean HTML only, starting with <h2>. CRITICAL: No RKRTL, no X-ray, no Elaeocarpus ganitrus, no mukhi language, and absolutely NO authentication/certification/testing claim of any kind — this is WOOD not a Rudraksha bead, and no verification process currently exists for it.`
-      : `Write a concise SEO product description for "${selectedProduct.title}" on RudraKailash.com.\n\nMAIN KEYWORD: ${selectedProduct.title}\n${originBlock}\n${mukhiFactsBlock}\n${anchorContentBlock}\nSTRUCTURE (follow exactly — GMC rules apply to all headings and opening paragraph):\n<h2>${selectedProduct.title} — RKRTL-Certified | X-Ray Verified | Authentic Rudraksha</h2>\n<p>[2–3 sentences IN THIS ORDER per the OPENING PARAGRAPH ORDER rule: (1) primary traditional use-case or astrological remedy driving the purchase — NOT species/origin facts; (2) certification, first mention written in full per the LOCKED DEFINITION rule; (3) origin stated exactly per the VERIFIED ORIGIN block above (never a different origin) plus bead size, as evidence for the certification claim — NO deity names anywhere in this paragraph]</p>\n<h3>Vedic Tradition & Significance of ${selectedProduct.title}</h3>\n[MAX 4 lines or <ul>: use the VERIFIED MUKHI FACTS above exactly — scripture reference, mantra, planet, chakra. Do not substitute a different deity, planet, or chakra than the one given. NO deity name in the heading itself; the deity name MUST appear at least once inside the bullet text — omitting it entirely defeats the purpose of this section. This is the one place in the entire output the deity name belongs; it must never appear in the heading or the opening paragraph.]\n<h3>Traditional Benefits Associated with ${selectedProduct.title}</h3>\n<ul>[4–5 bullets, DEEP-DIVE FORMAT: each bullet is <li><strong>[3-6 word benefit-topic label]:</strong> [2-3 full sentences, ~35-55 words]</li>, one per seeker situation. Each bullet: hedge with "seekers report/describe" (required, no direct claims), THEN anchor it to one named specific from the VERIFIED MUKHI FACTS above — the scripture, mantra, planet, or chakra given, not an invented alternative. BANNED: a hedge with no named specific attached, e.g. "seekers report enhanced focus" alone. If a Traditional Use-Case Note is present above, one bullet MUST cover it in this same depth — this is a primary purchase driver for this product and must not be dropped or shortened.]</ul>\n<h3>RKRTL Authentication — X-Ray Verified ${selectedProduct.title}</h3>\n[2–3 lines PLUS the VERIFIED ANCHOR CONTENT above woven in as direct, factual, non-hedged prose (not "seekers report" language) — this is a verifiable process claim, not a belief claim: name the three-view X-ray process (raw, edge-enhanced, and inverse imaging) plus microscopic verification, confirming mukhi ridge count and the exact botanical species stated in the SPECIES block above (do not default to Elaeocarpus ganitrus botanical structure if a different species is verified there); reference the unique certificate ID verifiable at rkrtl.com/verify only if the anchor content supplies it]\n<h3>Who Should Wear ${selectedProduct.title}</h3>\n<ul>[4–5 bullets, DEEP-DIVE FORMAT: each bullet is <li><strong>[3-6 word seeker-profile label]:</strong> [2-3 full sentences, ~35-55 words describing the seeker situation/life stage and, where natural, connecting back to the product's traditional association]</li> — describe by life situation, not by deity devotion]</ul>\n<h3>Wearing Guide — ${selectedProduct.title}</h3>\n<ul>[4–5 bullets: day to begin, thread/metal, mantra (use the VERIFIED MUKHI FACTS mantra), energisation]</ul>\n<h3>Frequently Asked Questions</h3>\n[4 FAQs covering: authenticity/certification, origin (MUST state the exact origin from the VERIFIED ORIGIN block above — never default to Nepal if a different origin is stated there), who can wear it, value/quality. If VERIFIED ANCHOR FAQ content is supplied above, ALL of those FAQs MUST be included (verbatim or lightly reworded, meaning unchanged) — expand beyond 4 FAQs if needed to fit every supplied anchor FAQ, rather than dropping any. MANDATORY EXACT HTML TEMPLATE — repeat this block once per question, numbered 1-4; do NOT use <dl>/<dt>/<dd> tags, they render as an undifferentiated wall of text on this theme (no CSS styles them distinctly):\n<div style="margin-bottom:20px"><p style="font-weight:bold;margin:0 0 6px 0">1. [Question]</p><p style="margin:0">[Answer]</p></div>]\n\n${kwPlacement}\n\nGAPS TO COVER: ${gapSummary}\nCURRENT DESCRIPTION: ${descPlain}\n\nOUTPUT: Clean HTML only, starting with <h2>. Strictly follow GMC heading and opening paragraph rules above.`;
-
-    const titleUser = isService
-      ? `Meta title for the "${selectedProduct.title}" service on RudraKailash.com. Max 60 chars. Include service name + MVS Vedapadasala or Authentic Vedic + RudraKailash brand.`
-      : isKarungali
-      ? `Meta title for "${selectedProduct.title}" on RudraKailash.com. Max 60 chars. Include "Karungali" or "Ebony Wood" + "Authentic" + "RudraKailash". Do NOT mention RKRTL or X-ray.`
-      : isSphatik
-      ? `Meta title for "${selectedProduct.title}" on RudraKailash.com. Max 60 chars. Include "Sphatik" or "Crystal" + "Natural" + "RudraKailash". Do NOT mention RKRTL or X-ray.`
-      : isTulsi
-      ? `Meta title for "${selectedProduct.title}" on RudraKailash.com. Max 60 chars. Include "Tulsi" + "Sacred" or "Holy" + "RudraKailash". Do NOT mention RKRTL, X-ray, "certified," or "verified" — no authentication method is established for this product.`
-      : `Meta title for "${selectedProduct.title}" on RudraKailash.com. LOCKED FORMAT — use this exact template, substituting only the product name and the origin word, with identical wording and identical pipe spacing every time: "{Product Name} | Natural {Origin} Bead | RKRTL Certified | RudraKailash". The {Origin} word MUST be exactly this: "${origin && origin.metaShort ? origin.metaShort : "[no verified origin for this product — omit the origin word entirely and use \"Natural Bead\" instead of \"Natural {Origin} Bead\"]"}" — do not substitute "Nepali" or any other origin word regardless of what seems typical for Rudraksha in general; this specific product's verified origin is what's stated here, and different products on this site legitimately have different origins. Example for a Nepal-origin product: "7 Mukhi Rudraksha | Natural Nepali Bead | RKRTL Certified | RudraKailash". Do not deviate from this template, add extra words, or reorder segments. Expected length is approximately 70-73 characters — this is intentional, do not shorten it to fit under 60. STRICT RULE: NO deity names (no Shiva, Vishnu, Ganesha, Hanuman, etc.) — this format is already deity-free; keep it that way.`;
-
-    const metaDescUser = isService
-      ? `Meta description for "${selectedProduct.title}" service on RudraKailash.com. 145–155 characters. Mention MVS Vedapadasala vadhyars, authentic Vedic tradition, booking CTA. Do NOT mention RKRTL.`
-      : isKarungali
-      ? `Meta description for "${selectedProduct.title}" on RudraKailash.com. Exactly 145–155 characters. Mention authentic Karungali ebony wood (Diospyros ebenum), Tamil Nadu origin, Shani remedy, and include a buy CTA. Do NOT mention RKRTL or X-ray.`
-      : isSphatik
-      ? `Meta description for "${selectedProduct.title}" on RudraKailash.com. 145–155 characters. Mention natural Sphatik (rock crystal), hardness/refractive-index verification, purity/clarity significance, and include a buy CTA. Do NOT mention RKRTL or X-ray.`
-      : isTulsi
-      ? `Meta description for "${selectedProduct.title}" on RudraKailash.com. 145–155 characters. Mention sacred Tulsi (Holy Basil), Vaishnava devotional significance, and include a buy CTA. Do NOT mention RKRTL, X-ray, "certified," or "verified" — no authentication method is established for this product.`
-      : `Meta description for "${selectedProduct.title}" on RudraKailash.com. Approximately 145–160 characters. Structure: [mukhi count + origin] + [RKRTL X-ray certified] + [unique benefit in neutral language] + [CTA: Shop/Buy/Order]. ${originBlock}Use that exact origin word/phrase — do not substitute "Nepali" if a different origin is verified above. NEVER state a specific bead size in mm — natural size ranges vary widely by mukhi count and origin and current inventory varies by batch, so any invented mm figure risks being factually wrong. STRICT RULES: NO deity names. NO spiritual benefit claims like "attracts wealth" or "removes negativity". Position as a certified natural bead. Example structure (Nepal-origin product): "Genuine Nepali 5 Mukhi Rudraksha, RKRTL X-ray certified for authenticity. Worn for clarity and calm. Buy authentic — RudraKailash."`;
-
-    const tagsUser = isService
-      ? `10–12 Shopify tags for the "${selectedProduct.title}" service on RudraKailash.com. Current: "${selectedProduct.tags||"none"}". Include: online puja, vedic service, MVS Vedapadasala, homa/puja type, coimbatore vadhyar, authentic vedic ritual, book online. No RKRTL tags.`
-      : isKarungali
-      ? `10–12 Shopify tags for "${selectedProduct.title}" on RudraKailash.com. Current: "${selectedProduct.tags||"none"}". Include: karungali, ebony mala, karungali mala, diospyros ebenum, shani remedy, saturn remedy, karungali bracelet, authentic ebony, tamil nadu, shaiva tradition, wood mala, protection mala. No RKRTL tags.`
-      : isSphatik
-      ? `10–12 Shopify tags for "${selectedProduct.title}" on RudraKailash.com. Current: "${selectedProduct.tags||"none"}". Include: sphatik, natural crystal, rock crystal, clear quartz, sphatik mala, lakshmi crystal, moon crystal, meditation crystal, purity stone. No RKRTL or X-ray tags.`
-      : isTulsi
-      ? `10–12 Shopify tags for "${selectedProduct.title}" on RudraKailash.com. Current: "${selectedProduct.tags||"none"}". Include: tulsi, tulsi mala, holy basil, ocimum tenuiflorum, vaishnav mala, krishna tulsi, japa mala, sacred tulsi, devotional mala. No RKRTL, X-ray, "certified," or "verified" tags — no authentication method is established for this product.`
-      : `10–12 Shopify tags for "${selectedProduct.title}". Current: "${selectedProduct.tags||"none"}". Include mukhi variants, rudraksha, RKRTL, certified, authentic, x-ray verified, bead bracelet, meditation beads. ${originBlock}Include one origin-specific tag matching that exact origin (e.g. "south indian rudraksha", "haridwar rudraksha", "indonesian rudraksha", or "nepali rudraksha" — whichever matches the VERIFIED ORIGIN above) — do not default to a Nepal tag if a different origin is verified. Avoid deity-specific tags that could trigger GMC identity and belief policy.`;
-
-    const faqUser = isService
-      ? `Generate 6 voice-search FAQ pairs for the "${selectedProduct.title}" service on RudraKailash.com.\n\nRules:\n- Natural spoken language questions\n- Answers 80-150 words, fully self-contained so each one stands alone as a citable passage — no dangling references to "as mentioned above"\n- Include: what the service is, who performs it (MVS Vedapadasala), how online delivery works, credentials (Kanchi Mutt VRNT), who should book, how to book\n- NO RKRTL certification language — this is a service not a product\n\nOutput ONLY JSON: [{"q":"Question?","a":"Answer, 80-150 words."},...] 6 items.`
-      : isKarungali
-      ? `Generate 6 voice-search FAQ pairs for "${selectedProduct.title}" on RudraKailash.com.\n\nRules:\n- Natural spoken language questions\n- Answers 80-150 words, fully self-contained so each one stands alone as a citable passage — no dangling references to "as mentioned above"\n- Include: what karungali (ebony) wood is, Diospyros ebenum botanical identity, Shani/Saturn connection, Tamil Nadu/Shaiva Siddhanta origin, how authenticity is verified, care instructions\n- Authentication is by wood grain pattern, density, and species identification — NEVER X-ray, NEVER RKRTL, NEVER Elaeocarpus ganitrus — this is WOOD, not Rudraksha\n- Avoid leading with deity names in questions\n\nOutput ONLY JSON: [{"q":"Question?","a":"Answer, 80-150 words."},...] 6 items.`
-      : isSphatik
-      ? `Generate 6 voice-search FAQ pairs for "${selectedProduct.title}" on RudraKailash.com.\n\nRules:\n- Natural spoken language questions\n- Answers 80-150 words, fully self-contained so each one stands alone as a citable passage\n- Include: what Sphatik (natural rock crystal) is, its Vedic significance (Lakshmi, Chandra), how it's authenticated (refractive index / Mohs hardness testing — natural quartz = 7), who should wear it, care instructions\n- NEVER X-ray, NEVER RKRTL, NEVER Elaeocarpus ganitrus, NEVER mukhi language — this is a MINERAL, not Rudraksha\n\nOutput ONLY JSON: [{"q":"Question?","a":"Answer, 80-150 words."},...] 6 items.`
-      : isTulsi
-      ? `Generate 6 voice-search FAQ pairs for "${selectedProduct.title}" on RudraKailash.com.\n\nRules:\n- Natural spoken language questions\n- Answers 80-150 words, fully self-contained so each one stands alone as a citable passage\n- Include: what Tulsi (Holy Basil / Ocimum tenuiflorum) mala is, Vaishnava significance, who should wear it, care instructions\n- CRITICAL: no authentication/testing/certification method is established for this product — do NOT include a question about authenticity verification, and do NOT reference RKRTL, "certified," or "verified" anywhere\n- NEVER X-ray, NEVER Elaeocarpus ganitrus, NEVER mukhi language — this is a different plant genus entirely, not Rudraksha\n\nOutput ONLY JSON: [{"q":"Question?","a":"Answer, 80-150 words."},...] 6 items.`
-      : `Generate 6 voice-search FAQ pairs for "${selectedProduct.title}" Rudraksha bead on RudraKailash.com.\n\n${originBlock}\n${mukhiFactsBlock}\n${anchorContentBlock}\nRules:\n- Natural spoken language questions\n- Answers 80-150 words, fully self-contained so each one stands alone as a citable passage — no dangling references to "as mentioned above"\n- Include: what it is, who should wear it, how to wear it, RKRTL authentication process, botanical species (per the SPECIES block above), buying advice\n- If VERIFIED ANCHOR FAQ content is supplied above, ALL of those FAQs MUST be included among the 6 pairs (verbatim or lightly reworded, meaning unchanged) — expand beyond 6 pairs if needed to fit every supplied anchor FAQ, rather than omitting any or inventing a substitute\n- If any answer touches origin, it MUST use the exact origin from the VERIFIED ORIGIN block above — do not default to Nepal or invent an alternate origin if a different one is stated there, and never state two different origins across different answers\n- If any answer touches botanical species, it MUST use the exact species from the SPECIES block above — do not default to Elaeocarpus ganitrus if a different species is stated there, and never state two different species across different answers\n- If any answer touches deity, planet, chakra, or mantra, it MUST match the VERIFIED MUKHI FACTS above exactly — do not substitute or invent an alternative\n- Use "seekers report" framing for belief/tradition claims only — VERIFIED ANCHOR CONTENT claims are factual/operational and should stay direct, not hedged\n- If RKRTL is mentioned, expand it on first use exactly as "RKRTL (Kailasha Rudraksha Testing Laboratory)" — never any other expansion\n- Avoid leading with deity names in questions\n- NEVER state a specific bead size in mm or weight in grams in any answer — natural size ranges vary by mukhi count, origin, and current inventory batch, so an invented figure risks being factually wrong\n\nOutput ONLY JSON: [{"q":"Question?","a":"Answer, 80-150 words."},...] 6 items.`;
-
-    const [descResult, titleResult, metaDescResult, tagsResult, faqResult] = await Promise.allSettled([
-      aiGenerate(descSystem, descUser, 6000),
-      aiGenerate(`SEO specialist. Output ONLY the meta title text. No quotes. No explanation.`, titleUser),
-      aiGenerate(`SEO specialist. Output ONLY the meta description text. No quotes. No explanation.`, metaDescUser),
-      aiGenerate(`Shopify SEO expert. Output ONLY comma-separated tags. No explanation.`, tagsUser),
-      aiGenerate(`Voice search SEO expert. Output ONLY valid JSON array. No markdown.`, faqUser, 2200),
-    ]);
-
-    const newDesc     = descResult.status     === "fulfilled" ? reformatFaqSection(ensureDeityPresent(stripHeadingSuffixes(stripTruncatedTrailingTag(cleanHTML(descResult.value))), mukhiFacts, selectedProduct.title)) : "<p>Generation failed.</p>";
-    const newTitle    = titleResult.status    === "fulfilled" ? titleResult.value.trim()        : selectedProduct.title;
-    const newMetaDesc = metaDescResult.status === "fulfilled" ? metaDescResult.value.trim()     : "";
-    const newTags     = tagsResult.status     === "fulfilled" ? tagsResult.value.trim()         : selectedProduct.tags || "";
-
-    setAgent("desc",     descResult.status     === "fulfilled" ? "done" : "error", descResult.status     === "fulfilled" ? "✓ Done" : "✗ Failed");
-    setAgent("title",    titleResult.status    === "fulfilled" ? "done" : "error", titleResult.status    === "fulfilled" ? "✓ Done" : "✗ Failed");
-    setAgent("metadesc", metaDescResult.status === "fulfilled" ? "done" : "error", metaDescResult.status === "fulfilled" ? "✓ Done" : "✗ Failed");
-    setAgent("tags",     tagsResult.status     === "fulfilled" ? "done" : "error", tagsResult.status     === "fulfilled" ? "✓ Done" : "✗ Failed");
-
-    if (faqResult.status === "fulfilled") {
-      try { generatedFAQs = JSON.parse(extractJsonValue(faqResult.value)); setAgent("faq","done",`✓ ${generatedFAQs.length} Q&As`); }
-      catch(e) { generatedFAQs = []; setAgent("faq","error","✗ Parse failed"); console.warn("FAQ JSON parse failed:", e.message, "— raw response (first 300 chars):", faqResult.value.slice(0, 300)); }
-    } else { setAgent("faq","error","✗ Failed"); }
-
-    document.getElementById("currentMetaTitle").textContent = selectedProduct.metafields_global_title_tag || "(not set)";
-    document.getElementById("currentMetaDesc").textContent  = selectedProduct.metafields_global_description_tag || "(not set)";
-    document.getElementById("newMetaTitle").value = newTitle;
-    document.getElementById("newMetaDesc").value  = newMetaDesc;
-    document.getElementById("newTags").value      = newTags;
-    document.getElementById("descPreview").innerHTML = newDesc;
-    document.getElementById("newDesc").value         = newDesc;
-    updateCharCount("newMetaTitle","metaTitleCount");
-    updateCharCount("newMetaDesc","metaDescCount");
-    renderCurrentTags(selectedProduct.tags);
-    renderNewTags();
-
-    const after = scoreSEO(newTitle, newMetaDesc, newTags, newDesc, isService, isKarungali, isSphatik, isTulsi);
-    showScore("scoreAfter", after);
-    document.getElementById("scoreImprovement").textContent = `+${after - before} PTS`;
-    document.getElementById("scoreReadiness").textContent   = after >= 80 ? "Excellent — ready to push" : after >= 60 ? "Good — review before push" : "Needs improvement";
-
-    renderFAQSection(generatedFAQs);
-    setAgent("schema","running","Building schema…");
-    await generateAndRenderSchema(selectedProduct, newTitle, newMetaDesc, newTags, generatedFAQs);
-    setAgent("schema","done","✓ JSON-LD ready");
-    await runSGEAnalysis(newDesc, selectedProduct.title, isService);
-    document.getElementById("resultsSection").classList.remove("hidden");
-
-  } catch (e) { console.error("Pipeline error:", e); }
-  runBtn.disabled = false; runBtn.textContent = "▶ Run AI SEO Agents";
-}
-
-// ─── AI call ──────────────────────────────────────────────────────────────────
-async function aiGenerate(system, user, max_tokens = 1200) {
-  const res = await fetch(PROXY_URL + "/ai/generate", {
-    method: "POST", headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({ system, user, max_tokens }),
-  });
-  if (!res.ok) { const e = await res.text().catch(() => res.status); throw new Error(`HTTP ${res.status}: ${e}`); }
-  const data = await res.json();
-  if (!data.success) throw new Error(data.error || "AI failed");
-  return data.text;
-}
-
-function withTimeout(promise, ms, label = "Operation") {
-  const timeout = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error(`${label} timed out after ${ms/1000}s`)), ms)
-  );
-  return Promise.race([promise, timeout]);
-}
-
-function cleanHTML(text) { return text.replace(/^```(?:html)?\s*/i,"").replace(/\s*```\s*$/,"").trim(); }
 
 function extractJsonValue(text) {
   const stripped = (text || "").replace(/^```json\s*/i, "").replace(/```\s*$/i, "").trim();
@@ -1545,134 +1628,30 @@ function extractJsonValue(text) {
   return stripped.slice(start, end + 1);
 }
 
-// ─── FAQ Render ───────────────────────────────────────────────────────────────
-function renderFAQSection(faqs) {
-  if (!faqs || faqs.length === 0) { document.getElementById("faqDisplay").innerHTML = '<div class="text-muted">No FAQs generated.</div>'; return; }
-  document.getElementById("faqDisplay").innerHTML = faqs.map((f,i) => `<div class="faq-item"><div class="faq-q">Q${i+1}: ${escHtml(f.q)}</div><div class="faq-a">${escHtml(f.a)}</div></div>`).join("");
-  const faqHtml = `<div class="rudrakailash-faq" itemscope itemtype="https://schema.org/FAQPage">\n` +
-    faqs.map(f => `  <div itemscope itemprop="mainEntity" itemtype="https://schema.org/Question">\n    <h4 itemprop="name">${escHtml(f.q)}</h4>\n    <div itemscope itemprop="acceptedAnswer" itemtype="https://schema.org/Answer">\n      <p itemprop="text">${escHtml(f.a)}</p>\n    </div>\n  </div>`).join("\n") + `\n</div>`;
-  document.getElementById("faqHtmlCode").textContent = faqHtml;
+async function callClaude(system, user, max_tokens = 1200) {
+  const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_KEY.trim(), "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens, system, messages: [{ role: "user", content: user }] }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error?.message || "Anthropic error");
+  return cleanAIOutput(data.content?.map(b => b.text || "").join("") || "");
 }
 
-// ─── Schema ───────────────────────────────────────────────────────────────────
-async function generateAndRenderSchema(product, metaTitle, metaDesc, tags, faqs) {
-  const titleEl = document.getElementById("schemaProductTitle");
-  if (titleEl) titleEl.textContent = `"${product.title}"`;
-  const display = document.getElementById("schemaPairsDisplay");
-  if (!faqs || faqs.length === 0) { display.innerHTML = '<div class="text-muted">No FAQs generated.</div>'; return; }
-  display.innerHTML = faqs.map((f, i) => `
-    <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:10px">
-      <div style="font-size:10px;color:var(--muted);letter-spacing:.5px;margin-bottom:10px">FAQ ${i+1} of ${faqs.length}</div>
-      <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:10px">
-        <div style="flex:1"><div style="font-size:10px;color:var(--gold);letter-spacing:.5px;margin-bottom:4px">QUESTION</div>
-        <div style="font-size:13px;color:var(--gold-lt);line-height:1.5" id="faq-q-${i}">${escHtml(f.q)}</div></div>
-        <button class="copy-btn" id="btn-q-${i}" style="flex-shrink:0;margin-top:18px" onclick="copyField(${i},'q')">Copy Q</button>
-      </div>
-      <div style="display:flex;align-items:flex-start;gap:10px;padding-top:10px;border-top:1px solid var(--border)">
-        <div style="flex:1"><div style="font-size:10px;color:var(--muted);letter-spacing:.5px;margin-bottom:4px">ANSWER</div>
-        <div style="font-size:12px;color:var(--cream);line-height:1.6" id="faq-a-${i}">${escHtml(f.a)}</div></div>
-        <button class="copy-btn" id="btn-a-${i}" style="flex-shrink:0;margin-top:18px" onclick="copyField(${i},'a')">Copy A</button>
-      </div>
-    </div>`).join("");
-}
-
-function copyField(index, field) {
-  const f = generatedFAQs[index]; if (!f) return;
-  const text = field === "q" ? f.q : f.a;
-  const btnId = field === "q" ? `btn-q-${index}` : `btn-a-${index}`;
-  const orig  = field === "q" ? "Copy Q" : "Copy A";
-  navigator.clipboard.writeText(text).then(() => { const btn = document.getElementById(btnId); if (btn) { btn.textContent = "✓ Copied!"; setTimeout(() => btn.textContent = orig, 2000); } });
-}
-
-function downloadFaqCsv() {
-  if (!generatedFAQs || generatedFAQs.length === 0) { alert("No FAQs generated yet."); return; }
-  if (!selectedProduct) { alert("No product selected."); return; }
-  const itemUrl = `https://admin.shopify.com/store/d59207-af/products/${selectedProduct.id}`;
-  const qaCols = []; for (let i = 1; i <= generatedFAQs.length; i++) { qaCols.push(`question_${i}`,`answer_${i}`); }
-  const header = ["item_name","item_url","item_type",...qaCols];
-  const dataRow = [selectedProduct.title, itemUrl, "product"];
-  generatedFAQs.forEach(f => { dataRow.push(f.q, f.a); });
-  const csvCell = v => `"${(v||"").replace(/"/g,'""')}"`;
-  const csv = [header.map(csvCell).join(","), dataRow.map(csvCell).join(",")].join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement("a"); a.href = url;
-  a.download = `schemaplus-faq-${(selectedProduct.handle||selectedProduct.title).toLowerCase().replace(/\s+/g,"-").slice(0,40)}.csv`;
-  a.click(); URL.revokeObjectURL(url);
-}
-
-// ─── SGE Analysis ─────────────────────────────────────────────────────────────
-async function runSGEAnalysis(descHtml, productTitle, isService = false) {
-  try {
-    const descText = descHtml.replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim();
-    const sgeRaw = await aiGenerate(
-      `You are an AI search citation analyst. Output ONLY valid JSON. No markdown.`,
-      `Analyse this ${isService ? "service page" : "product page"} for Google SGE citation probability.\n\nProduct: "${productTitle}"\nContent: "${descText.slice(0,2000)}"\n\nScore 5 passage types (1-10):\n1. "Definition/What it is"\n2. "Spiritual/Traditional significance"\n3. "${isService ? "Vadhyar credentials/Authenticity" : "Authentication/Certification"}"\n4. "Who should use it"\n5. "${isService ? "How the service works" : "How to use/wear it"}"\n\nOutput ONLY JSON:\n{"passages":[{"type":"...","score":0,"reason":"..."}],"overallScore":0,"verdict":"High","improvements":["...","...","..."]}`, 1000
-    );
-    const sgeData = JSON.parse(extractJsonValue(sgeRaw));
-    renderSGEAnalysis(sgeData);
-  } catch(e) { document.getElementById("sgePassageList").innerHTML = '<div class="text-muted">SGE analysis unavailable.</div>'; }
-}
-
-function renderSGEAnalysis(data) {
-  const scoreEl = document.getElementById("sgeScoreNum");
-  const score = data.overallScore || 0;
-  scoreEl.textContent = `${score}/10`;
-  scoreEl.className = "sge-score-num " + (score >= 7 ? "sge-high" : score >= 5 ? "sge-mid" : "sge-low");
-  const badge = document.getElementById("sgeBadge");
-  badge.textContent = data.verdict === "High" ? "🟢 High Citation Probability" : data.verdict === "Medium" ? "🟡 Medium Citation Probability" : "🔴 Low Citation Probability";
-  badge.style.cssText = `background:${data.verdict==="High"?"#0A2A0A":data.verdict==="Medium"?"#2A2000":"#2A0A0A"};color:${data.verdict==="High"?"var(--green)":data.verdict==="Medium"?"var(--orange)":"var(--red)"};border:1px solid ${data.verdict==="High"?"#1A5A1A":data.verdict==="Medium"?"#5A4000":"#5A1A1A"};padding:3px 10px;border-radius:8px`;
-  document.getElementById("sgeScoreWrap").classList.remove("hidden");
-  document.getElementById("sgePassageList").innerHTML = (data.passages||[]).map(p => {
-    const cls = p.score >= 7 ? "sge-p-high" : p.score >= 5 ? "sge-p-mid" : "sge-p-low";
-    return `<div class="sge-passage-item ${cls}"><span class="sge-p-score">${p.score}/10</span><div style="color:var(--cream);font-size:12px;font-weight:bold;margin-bottom:3px">${escHtml(p.type)}</div><div style="color:var(--muted);font-size:11px">${escHtml(p.reason)}</div></div>`;
-  }).join("");
-  document.getElementById("sgeSuggestions").innerHTML = (data.improvements||[]).map((s,i) => `<div style="margin-bottom:8px">✦ ${i+1}. ${escHtml(s)}</div>`).join("");
-}
-
-// ─── Render helpers ───────────────────────────────────────────────────────────
-function renderCompetitors(competitors) {
-  const list = document.getElementById("compList");
-  if (!competitors.length) { list.innerHTML = '<div class="text-muted">No competitor pages found.</div>'; return; }
-  list.innerHTML = competitors.map(c => `<div class="comp-item"><div class="comp-url">🔗 ${c.url} <span class="comp-badge ${c.fetched?'badge-fetched':'badge-snippet'}">${c.fetched?"Full page fetched":"Snippet only"}</span></div><div class="comp-snippet">${(c.content||c.snippet||"").slice(0,200)}…</div></div>`).join("");
-}
-
-function renderGaps(gaps) {
-  if (!gaps.length) return;
-  document.getElementById("gapSection").classList.remove("hidden");
-  document.getElementById("gapTags").innerHTML = gaps.map(g => `<span class="gap-tag">● ${g}</span>`).join("");
-}
-
-function renderKeywords(kw) {
-  const h1s=(kw.h1||[]),h2h3s=(kw.h2h3||[]),phrases=(kw.phrases||[]);
-  if (!h1s.length && !h2h3s.length && !phrases.length) return;
-  document.getElementById("kwSection").classList.remove("hidden");
-  let html = "";
-  if (h1s.length) html += `<div style="margin-bottom:6px"><span style="font-size:10px;color:var(--orange);letter-spacing:.5px;margin-right:6px">H1 PRIMARY</span>${h1s.map(k=>`<span class="kw-tag-h1">● ${k}</span>`).join("")}</div>`;
-  if (h2h3s.length) html += `<div style="margin-bottom:6px"><span style="font-size:10px;color:#D090F0;letter-spacing:.5px;margin-right:6px">H2/H3 SUB-TOPICS</span>${h2h3s.map(k=>`<span class="kw-tag-h2h3">● ${k}</span>`).join("")}</div>`;
-  if (phrases.length) html += `<div style="margin-bottom:6px"><span style="font-size:10px;color:#60C0C0;letter-spacing:.5px;margin-right:6px">LONG-TAIL INTENT</span>${phrases.map(k=>`<span class="kw-tag-phrase">● ${k}</span>`).join("")}</div>`;
-  document.getElementById("kwTags").innerHTML = html;
-}
-
-function renderCurrentTags(tags) {
-  document.getElementById("currentTags").innerHTML = (tags||"").split(",").filter(Boolean).map(t=>`<span class="tag-pill">${t.trim()}</span>`).join("") || '<span class="text-muted">No tags</span>';
-}
-function renderNewTags() {
-  document.getElementById("newTagsDisplay").innerHTML = document.getElementById("newTags").value.split(",").filter(Boolean).map(t=>`<span class="tag-pill new">${t.trim()}</span>`).join("");
-}
-function updateCharCount(inputId, countId) { document.getElementById(countId).textContent = document.getElementById(inputId).value.length; }
-
-// ─── SEO Score (service + Karungali aware) ───────────────────────────────────
+// ─── scoreSEO — Karungali-aware ───────────────────────────────────────────────
 function scoreSEO(metaTitle, metaDesc, tags, desc, isService = false, isKarungali = false, isSphatik = false, isTulsi = false) {
   const titleLen = (metaTitle||"").length, descLen = (metaDesc||"").length;
   const tagCount = (tags||"").split(",").filter(Boolean).length;
-  const descText = (desc||"").replace(/<[^>]+>/g,"");
+  const descText = (desc||"").replace(/<[^>]+>/g, "");
+
   let certCheck, descCertCheck;
   if (isService) {
     certCheck     = /vedic|puja|homa|vadhyar|mvs/i.test(tags||"");
     descCertCheck = /mvs|vedapadasala|vadhyar|kanchi/i.test(descText);
   } else if (isKarungali) {
-    certCheck     = /karungali|ebony|wood|authentic/i.test(tags||"");
+    certCheck     = /karungali|ebony|wood|certified|authentic/i.test(tags||"");
     descCertCheck = /karungali|ebony|diospyros|authentic|wood/i.test(descText);
   } else if (isSphatik) {
     certCheck     = /sphatik|crystal|quartz|natural/i.test(tags||"");
@@ -1684,6 +1663,7 @@ function scoreSEO(metaTitle, metaDesc, tags, desc, isService = false, isKarungal
     certCheck     = /rkrtl|certified|authentic/i.test(tags||"");
     descCertCheck = /rkrtl|certified|x-ray/i.test(descText);
   }
+
   const checks = [
     titleLen>0, titleLen>=40&&titleLen<=75, /(rudrakailash)/i.test(metaTitle||""),
     descLen>0, descLen>=130&&descLen<=165, /shop|buy|order|get|explore|book/i.test(metaDesc||""),
@@ -1692,333 +1672,372 @@ function scoreSEO(metaTitle, metaDesc, tags, desc, isService = false, isKarungal
     descCertCheck,
   ];
   const pts = [10,10,5,10,10,5,5,8,7,10,10,5,5];
-  return Math.round(checks.reduce((s,c,i)=>s+(c?pts[i]:0),0)/pts.reduce((s,p)=>s+p,0)*100);
+  return Math.round(checks.reduce((s,c,i) => s+(c?pts[i]:0), 0) / pts.reduce((s,p) => s+p, 0) * 100);
 }
 
-function showScore(elId, score) {
-  const el = document.getElementById(elId);
-  el.textContent = score;
-  el.className = "score-num " + (score >= 80 ? "high" : score >= 50 ? "mid" : "low");
-  const barEl = document.getElementById(elId + "Bar");
-  if (barEl) barEl.querySelector(".progress-fill").style.width = score + "%";
+async function runSEOPipeline(product) {
+  console.log(`🤖 SEO pipeline: ${product.title}`);
+  const isService   = isServiceProduct(product);
+  const isKarungali = !isService && isKarungaliProduct(product);
+  const isSphatik   = !isService && !isKarungali && isSphatikProduct(product);
+  const isTulsi     = !isService && !isKarungali && !isSphatik && isTulsiProduct(product);
+  const isBead      = !isService && !isKarungali && !isSphatik && !isTulsi;
+  if (isService)   console.log(`🛕 Detected as SERVICE product — using service prompt`);
+  if (isKarungali) console.log(`🪵 Detected as KARUNGALI product — using wood auth prompt`);
+  if (isSphatik)   console.log(`💎 Detected as SPHATIK product — using crystal auth prompt`);
+  if (isTulsi)     console.log(`🌿 Detected as TULSI product — using Tulsi prompt (no authentication claim)`);
+
+  const descPlain   = (product.body_html||"").replace(/<[^>]+>/g,"").slice(0,400);
+  const competitors = await runCompetitorResearch(product.title);
+
+  let extractedKeywords = { h1: [], h2h3: [], phrases: [] };
+  let keywordBrief = "";
+
+  if (competitors.length > 0) {
+    try {
+      const compHeadingInput = competitors.map((c, i) => {
+        const headings = c.headings || {};
+        const h1s   = (headings.h1   || []).slice(0, 3).join(" | ");
+        const h2h3s = (headings.h2h3 || []).slice(0, 6).join(" | ");
+        const text  = (c.content || c.snippet || "").slice(0, 400);
+        return `Competitor ${i+1} (${c.url}):\nH1: ${h1s || "none"}\nH2/H3: ${h2h3s || "none"}\nBody: ${text}`;
+      }).join("\n\n---\n\n");
+
+      const kwRaw = await callClaude(
+        `You are an SEO keyword analyst. Output ONLY valid JSON. No markdown. No explanation.`,
+        `Extract SEO keywords from these ${competitors.length} competitor pages for "${product.title}" on RudraKailash.com.\n\n${compHeadingInput}\n\nExtract:\n1. h1Keywords: Primary keywords from competitor H1 tags (max 8, exact phrases)\n2. h2h3Keywords: Sub-topic LSI keywords from H2/H3 headings (max 12, exact phrases)\n3. intentPhrases: Recurring long-tail intent phrases from body text across 2+ competitors (max 10)\n\nOutput ONLY:\n{"h1":["phrase1"],"h2h3":["phrase1"],"phrases":["phrase1"]}`, 1500
+      );
+      try {
+        const kw = JSON.parse(extractJsonValue(kwRaw));
+        extractedKeywords = { h1: kw.h1||[], h2h3: kw.h2h3||[], phrases: kw.phrases||[] };
+        const h1List = extractedKeywords.h1.slice(0,5).join(" / ");
+        const h2h3List = extractedKeywords.h2h3.slice(0,8).join(", ");
+        const phraseList = extractedKeywords.phrases.slice(0,8).join(", ");
+        keywordBrief = [
+          h1List     ? `H1 PRIMARY KEYWORDS (use in <h2> and opening <p>): ${h1List}` : "",
+          h2h3List   ? `H2/H3 SUB-TOPIC KEYWORDS (use as or inside <h3> headings — naturally, not forced): ${h2h3List}` : "",
+          phraseList ? `LONG-TAIL INTENT PHRASES (weave into bullets and FAQ questions): ${phraseList}` : "",
+        ].filter(Boolean).join("\n");
+      } catch(e) { console.warn("Keyword JSON parse failed:", e.message, "— raw response (first 300 chars):", kwRaw.slice(0, 300)); keywordBrief = ""; }
+    } catch(e) { console.warn("Keyword extraction failed:", e.message); }
+  }
+
+  let gapSummary = "Cover all key topics comprehensively.";
+  if (competitors.length > 0) {
+    try {
+      const compTexts = competitors.map((c,i) => `Competitor ${i+1} (${c.url}):\n${(c.content||c.snippet).slice(0,500)}`).join("\n\n---\n\n");
+      const gapRaw = await callClaude(`SEO strategist. Output ONLY JSON array of gap strings.`, `Product: "${product.title}". Our: "${descPlain}". Competitors:\n${compTexts}\nIdentify 5-8 gaps. Output ONLY JSON array.`, 700);
+      try {
+        const gaps = JSON.parse(extractJsonValue(gapRaw));
+        gapSummary = `Fill: ${gaps.join("; ")}`;
+      } catch(e) { console.warn("Gap analysis JSON parse failed:", e.message, "— falling back to raw text"); gapSummary = gapRaw.slice(0,300); }
+    } catch(e) { console.warn("Gap analysis failed:", e.message); }
+  }
+
+  const isMalaProd = isMalaProduct(product.title);
+  const origin = isBead ? resolveOrigin(product.title, isMalaProd) : null;
+  const originBlock = buildOriginBlock(origin);
+  const mukhiFacts = isBead ? getMukhiFacts(product.title) : null;
+  const mukhiFactsBlock = buildMukhiFactsBlock(mukhiFacts);
+  const anchorItems = isBead ? getAnchorContent(product.title) : [];
+  const anchorContentBlock = isBead ? buildAnchorContentBlock(anchorItems) : "";
+  const selfContainedRule = `SELF-CONTAINED SENTENCE RULE (critical for AI/GEO extraction — this determines whether a passage can be lifted into an AI-generated answer): every bullet and every sentence must pass this test — read alone, with no heading and no surrounding text, does it still make complete sense? Concretely: (1) never open a bullet with a bare fragment like "Ruled by Shani (Saturn)…" — give it an explicit subject, e.g. "${product.title} is traditionally associated with Shani (Saturn)…"; (2) never start a bullet with a bare pronoun ("It…", "This…") with no stated antecedent in the same sentence — restate the product name or "this bead"/"this mala" instead; (3) each bullet must read as a complete, standalone claim understandable with zero prior context, not a continuation of the heading above it.`;
+  const kwPlacementInstructions = keywordBrief
+    ? `MANDATORY KEYWORD PLACEMENT:\n${keywordBrief}\n\nPLACEMENT RULES:\n- <h2>: Must contain one of the H1 PRIMARY KEYWORDS\n- Opening <p>: Naturally include the primary H1 keyword within first 60 words\n- <h3> headings: Use H2/H3 SUB-TOPIC KEYWORDS as heading phrases where they fit\n- Bullets: Address LONG-TAIL INTENT PHRASES as seeker experience\n- FAQ: Word at least 2 questions using the exact phrasing of LONG-TAIL INTENT phrases\n\n${selfContainedRule}`
+    : `KEYWORD GUIDANCE: Use standard SEO keywords appropriate to this product.\n\n${selfContainedRule}`;
+
+  // ── Description system prompt — three-way branch ──────────────────────────
+  const descSystem = isService
+    ? `You are a Vedic services SEO expert writing concise service page descriptions for RudraKailash.com. Rules: (1) SEO — keyword in first <h2> and opening <p>; (2) E-E-A-T — cite vadhyar credentials, MVS Vedapadasala, Kanchi Mutt VRNT achievement; (3) NO Rudraksha bead language, NO RKRTL certification, NO X-ray testing references — this is a SERVICE not a product. HEADING TEXT RULE (mandatory): Every <h2> and <h3> heading must contain ONLY its own section title — nothing appended after it. Do NOT copy or repeat the meta title's pipe-separated format (e.g. "| X-Ray Certified | Nepal Origin | RKRTL Authenticated") into body headings; that format belongs exclusively to the meta title field and must never appear inside body_html. Correct: "<h3>Who Should Book ${product.title}</h3>". Violation — never produce this: "<h3>Who Should Book ${product.title} | X-Ray Certified | Nepal Origin | RKRTL Authenticated</h3>". Output clean HTML only. No markdown. No preamble.`
+    : isKarungali
+    ? `You are a sacred wood jewellery SEO expert writing concise product descriptions for RudraKailash.com. Rules: (1) SEO — keyword in first <h2> and opening <p> within 100 words; (2) E-E-A-T — botanical name Diospyros ebenum, Shaiva Siddhanta tradition, Tamil Nadu heritage, wood grain authentication; (3) STRICT — NO X-ray testing, NO RKRTL certification language, NO Elaeocarpus ganitrus — Karungali is authenticated by botanical species, wood density, and grain pattern, NOT X-ray imaging. DEPTH RULE (mandatory, applies specifically to "What Seekers Experience" and "Who Should Wear" — see per-section instructions below): these two sections are deep-dive sections, not shallow one-line bullets — each bullet gets a bold lead-in label plus 2-3 full sentences of genuine substance. All other sections stay concise: MAX 4 lines of prose, or a <ul> if more structure helps. Keep total description under 850 words (higher than a typical product page, intentionally, to accommodate the two deep-dive sections). HEADING TEXT RULE (mandatory): Every <h2> and <h3> heading must contain ONLY its own section title — nothing appended after it. Do NOT copy or repeat the meta title's pipe-separated format (e.g. "| X-Ray Certified | Nepal Origin | RKRTL Authenticated") into body headings; that format belongs exclusively to the meta title field and must never appear inside body_html. Correct: "<h3>Who Should Wear ${product.title}</h3>". Violation — never produce this: "<h3>Who Should Wear ${product.title} | X-Ray Certified | Nepal Origin | RKRTL Authenticated</h3>". Output clean HTML only. No markdown. No preamble.`
+    : isSphatik
+    ? `You are a crystal/gemstone SEO expert writing concise product descriptions for RudraKailash.com. Rules: (1) SEO — keyword in first <h2> and opening <p> within 100 words; (2) E-E-A-T — Sphatik is natural rock crystal (clear quartz, chemically silicon dioxide), associated in Vedic tradition with Goddess Lakshmi and the Moon (Chandra), valued for purity, clarity, and meditation; (3) STRICT — NO X-ray testing, NO RKRTL X-ray certification language, NO Elaeocarpus ganitrus, NO "mukhi" or face-count language of any kind — Sphatik is a mineral, not a seed, and has no mukhi structure. Authentication is by refractive index testing and/or Mohs hardness testing (natural quartz = 7 on the Mohs scale; the main fraud risk in this category is glass sold as Sphatik, which is both optically and mechanically softer) — name this method directly and factually, not hedged, since it is a verifiable physical test, not a belief claim. DEPTH RULE (mandatory, applies specifically to "What Seekers Experience" and "Who Should Wear" — see per-section instructions below): these two sections are deep-dive sections, not shallow one-line bullets — each bullet gets a bold lead-in label plus 2-3 full sentences of genuine substance. All other sections stay concise: MAX 4 lines of prose, or a <ul> if more structure helps. Keep total description under 850 words (higher than a typical product page, intentionally, to accommodate the two deep-dive sections). HEADING TEXT RULE (mandatory): Every <h2> and <h3> heading must contain ONLY its own section title — nothing appended after it. Do NOT copy or repeat the meta title's pipe-separated format (e.g. "| X-Ray Certified | Nepal Origin | RKRTL Authenticated") into body headings; that format belongs exclusively to the meta title field and must never appear inside body_html. Correct: "<h3>Who Should Wear ${product.title}</h3>". Violation — never produce this: "<h3>Who Should Wear ${product.title} | X-Ray Certified | Nepal Origin | RKRTL Authenticated</h3>". Output clean HTML only. No markdown. No preamble.`
+    : isTulsi
+    ? `You are a Vedic jewellery SEO expert writing concise product descriptions for RudraKailash.com. Rules: (1) SEO — keyword in first <h2> and opening <p> within 100 words; (2) E-E-A-T — Tulsi (Holy Basil, botanical name Ocimum tenuiflorum) is sacred to Lord Vishnu and Krishna in Vaishnava tradition; (3) CRITICAL — RudraKailash does not currently have an established, verifiable authentication/testing method for Tulsi (unlike RKRTL's X-ray process for Rudraksha, or refractive-index/hardness testing for Sphatik). DO NOT invent, imply, or reference any authentication process, testing method, certificate, or verification claim for this product — no RKRTL, no "certified," no "verified authentic," no "tested." Describe sourcing honestly and modestly instead (e.g. "sourced from Tulsi plants," without an unsupported verification claim attached). NO X-ray, NO RKRTL, NO Elaeocarpus ganitrus, NO mukhi language — Tulsi is a different plant genus entirely. DEPTH RULE (mandatory, applies specifically to "What Seekers Experience" and "Who Should Wear" — see per-section instructions below): these two sections are deep-dive sections, not shallow one-line bullets — each bullet gets a bold lead-in label plus 2-3 full sentences of genuine substance. All other sections stay concise: MAX 4 lines of prose, or a <ul> if more structure helps. Keep total description under 850 words (higher than a typical product page, intentionally, to accommodate the two deep-dive sections). HEADING TEXT RULE (mandatory): Every <h2> and <h3> heading must contain ONLY its own section title — nothing appended after it. Do NOT copy or repeat the meta title's pipe-separated format (e.g. "| X-Ray Certified | Nepal Origin | RKRTL Authenticated") into body headings; that format belongs exclusively to the meta title field and must never appear inside body_html. Correct: "<h3>Who Should Wear ${product.title}</h3>". Violation — never produce this: "<h3>Who Should Wear ${product.title} | X-Ray Certified | Nepal Origin | RKRTL Authenticated</h3>". Output clean HTML only. No markdown. No preamble.`
+    : `You are a Rudraksha SEO expert writing concise, scannable product descriptions for RudraKailash.com. Rules: (1) SEO — keyword in first <h2>, keyword in first <p> within 100 words, 1–2% density, LSI keywords in every <h3>, no stuffing; (2) E-E-A-T — experience framing ("seekers describe…") for subjective/spiritual claims ONLY, Vedic scripture citations, correct botanical species name for this specific product (see SPECIES block in the user message below — do not assume Elaeocarpus ganitrus by default, some products are a verified different species), zero direct health/benefit claims; (3) Feb 2026 Google Discover — original perspective, depth, clear non-clickbait headings, Indian audience.
+
+LOCKED DEFINITION (mandatory): On first mention of RKRTL anywhere in the output, write it in full exactly as "RKRTL (Kailasha Rudraksha Testing Laboratory)" — this exact string, never paraphrased, never re-expanded, never given an alternate name. Every subsequent mention in the same output may use "RKRTL" alone. Never introduce any other expansion of the acronym in any output, ever.
+
+OPENING PARAGRAPH ORDER (mandatory — this is a purchase-intent page, not an encyclopedia entry): (1) lead with the primary traditional use-case or astrological remedy that drives the purchase — never lead with species/botanical identification; (2) state certification per the LOCKED DEFINITION rule above; (3) origin/species/structural detail comes last, framed as evidence supporting the certification claim. BANNED opening pattern: "The [N] Mukhi Rudraksha is a [N]-faced bead from the Elaeocarpus ganitrus tree…" — do not use this or close variants.
+
+ORIGIN RULE (mandatory — read carefully, this varies per product and is provided per-request below, NOT a fixed site-wide default): the VERIFIED ORIGIN block in the user message states the one correct origin claim for THIS specific product. Use that exact origin consistently everywhere origin is mentioned — intro, meta fields, tags, FAQ. Different products on this site legitimately have different origins (Nepal, South India, Haridwar/Uttarakhand, or Indonesia depending on mukhi count, shape, and whether it's a single bead or mala) — never assume Nepal as a universal default, and never introduce an origin not stated in that block.
+
+SPECIES RULE (mandatory — same principle as ORIGIN RULE above): the SPECIES field in the VERIFIED ORIGIN block states the one correct botanical species for THIS specific product. Most Rudraksha on this site are Elaeocarpus ganitrus, but not all — the 1 Mukhi Half-Moon (Chandrakar) is Elaeocarpus tuberculatus, a genuinely different species, disclosed transparently rather than glossed over. Never assume Elaeocarpus ganitrus as a universal default; always use the exact species stated in that block, including in the RKRTL Authentication/Certification section.
+
+MEASUREMENT ACCURACY RULE (mandatory): Never state a specific bead size (mm) or weight (grams) as fact anywhere in the output — intro, bullets, or FAQ — unless that exact figure appears in CURRENT DESCRIPTION below. Nothing in this prompt is fed real Shopify variant data, so any size/weight you generate is invented, not accurate, and risks contradicting the actual variant the customer selects. If no size/weight appears in CURRENT DESCRIPTION, omit specific measurements entirely and let the product's variant selector convey size instead.
+
+VERIFIED ANCHOR CONTENT RULE (mandatory — read carefully, this is a distinct requirement from VERIFIED MUKHI FACTS above): the VERIFIED ANCHOR CONTENT block in the user message contains real, confirmed operational/testing facts specific to this product or universal to all Rudraksha products (e.g. exact screening steps, measurement methods, verification process). These exist specifically to break the repetitive "seekers traditionally associate/report/describe" template pattern that recurs identically across every product page — Google's 2026 core updates specifically target this kind of cosmetic-variation-only content at catalog scale. Weave the supplied anchor content into the RKRTL Authentication section (or a short additional section immediately after it) as factual, non-hedged prose — these are verifiable process claims, not belief claims, so do NOT wrap them in "seekers report" language. If the block states no anchor content was supplied, do not invent a substitute — proceed without that passage.
+
+GMC IDENTITY & BELIEF POLICY RULES (critical — violations cause ad restrictions):
+- NEVER use deity names (Shiva, Vishnu, Ganesha, Hanuman, Lakshmi, Durga, Parvati, Brahma, Indra, etc.) in H1, H2, or H3 headings
+- NEVER use deity names in the opening paragraph (first <p> tag)
+- The deity name from VERIFIED MUKHI FACTS MUST appear at least once inside the "Vedic Tradition & Significance" bullets — omitting it entirely defeats the purpose of that section. It must never appear in any heading or in the opening paragraph — only there.
+- CRITICAL CLARIFICATION ON DEITY NAMING (read carefully — this is where the model has previously failed): a hedged, traditionally-framed sentence that includes a deity's name IS compliant and IS required. It is NOT the same thing as a banned direct benefit claim. Do not omit a required deity name out of excess caution, especially for deities traditionally associated with wealth, love, or other benefits (e.g. Goddess Mahalakshmi, Kamadeva) — naming them is fine; asserting a guaranteed outcome is not. COMPLIANT (do this): "Seekers traditionally associate the 7 Mukhi with Goddess Mahalakshmi and report keeping it in a cash box or wearing it to support financial stability during difficult periods." NON-COMPLIANT (do not write this): "This bead pleases Goddess Mahalakshmi and attracts wealth and money." The difference is hedging language ("seekers traditionally associate / report") and avoiding absolute guarantees — not the presence or absence of the deity's name itself.
+- NEVER write direct spiritual benefit claims like "attracts wealth", "removes negativity", "pleases Lord Shiva", "blesses the wearer" — use "seekers report…" framing only
+- Position the product as a natural, scientifically authenticated seed bead — not a religious item
+
+HEADING TEXT RULE (mandatory): Every <h2> and <h3> heading must contain ONLY its own section title — nothing appended after it. Do NOT copy or repeat the meta title's pipe-separated format (e.g. "| X-Ray Certified | Nepal Origin | RKRTL Authenticated") into body headings; that format belongs exclusively to the meta title field and must never appear inside body_html. Correct: "<h3>Who Should Wear ${product.title}</h3>". Violation — never produce this: "<h3>Who Should Wear ${product.title} | X-Ray Certified | Nepal Origin | RKRTL Authenticated</h3>".
+
+DEPTH RULE (mandatory, applies specifically to "Traditional Benefits" and "Who Should Wear" — see per-section instructions below): these two sections are deep-dive sections, not shallow one-line bullets — each bullet gets a bold lead-in label plus 2-3 full sentences of genuine substance, still hedged per the rules above. All other sections stay concise: MAX 4 lines of prose, or a <ul> if more structure helps. Keep total description under 900 words (higher than a typical product page, intentionally, to accommodate the two deep-dive sections). Output clean HTML only. No markdown. No preamble.`;
+
+  // ── Description user prompt — three-way branch ────────────────────────────
+  const descUser = isService
+    ? `Write a concise SEO service description for "${product.title}" offered by RudraKailash.com.\n\nMAIN KEYWORD: ${product.title}\n\nSERVICE CONTEXT:\n- Performed by: MVS Vedapadasala vadhyars, Coimbatore (Ghana Parayana trained)\n- Vadhyars Bhadrinath, Akshai Jayaraman, Harish secured 1st place in VRNT examination by Kanchi Mutt\n- Delivered online — customer books, vadhyars perform, video/photo documentation sent\n- Authentic traditional setting — real padashaala, not studio\n\nSTRUCTURE:\n<h2>${product.title} — Online Vedic Service by MVS Vedapadasala</h2>\n<p>[2–3 sentences: what this service is, who performs it, spiritual purpose]</p>\n<h3>Vedic Significance of ${product.title}</h3>\n[MAX 4 lines: scriptural basis, deity invoked, spiritual purpose]\n<h3>What You Receive — Complete Service Inclusions</h3>\n<ul>[4–5 bullets: performance by trained vadhyars, video/photo documentation, personalised sankalpa, date flexibility, prasad dispatch if applicable]</ul>\n<h3>Performed by MVS Vedapadasala — Authentic Coimbatore Vadhyars</h3>\n[2–3 lines: Ghana Parayana training, Kanchi Mutt VRNT 1st place, real padashaala environment]\n<h3>Who Should Book ${product.title}</h3>\n<ul>[4–5 bullets, DEEP-DIVE FORMAT: each bullet is <li><strong>[3-6 word devotee-profile label]:</strong> [2-3 full sentences, ~35-55 words, describing the life situation or need and why this service fits it]</li> — ideal devotee profiles, e.g. "Those seeking…", "Families facing…"]</ul>\n<h3>How to Book Your ${product.title}</h3>\n<ul>[4 bullets: step-by-step — select date, provide sankalpa details, vadhyars perform, receive documentation]</ul>\n<h3>Frequently Asked Questions About ${product.title}</h3>\n[4 FAQs covering: how the online service works, vadhyar credentials, what is delivered, booking customisation. MANDATORY EXACT HTML TEMPLATE — repeat this block once per question, numbered 1-4; do NOT use <dl>/<dt>/<dd> tags, they render as an undifferentiated wall of text on this theme (no CSS styles them distinctly):\n<div style="margin-bottom:20px"><p style="font-weight:bold;margin:0 0 6px 0">1. [Question]</p><p style="margin:0">[Answer]</p></div>]\n\n${kwPlacementInstructions}\n\nCONTENT GAPS TO COVER: ${gapSummary}\nCURRENT DESCRIPTION (for reference): ${descPlain}\n\nOUTPUT: Clean HTML only, starting with <h2>. Service content only — no bead/certification language.`
+    : isKarungali
+    ? `Write a concise SEO product description for "${product.title}" on RudraKailash.com.\n\nMAIN KEYWORD: ${product.title}\n\nPRODUCT CONTEXT:\n- Material: Karungali (Ebony) wood — botanical name Diospyros ebenum\n- Origin: Tamil Nadu, South India — deeply rooted in Shaiva Siddhanta tradition\n- Authentication: Visual grain pattern inspection, wood density verification, species identification — NOT X-ray\n- Associated deity: Lord Shani (Saturn) — primary; also used for protection and grounding\n- Traditional use: Japa mala, daily wear, protection against negative energies\n\nSTRUCTURE:\n<h2>${product.title} — Authentic Karungali Ebony Wood from Tamil Nadu</h2>\n<p>[2–3 sentences: keyword in first sentence, material, traditional significance, seeker hook]</p>\n<h3>Significance of Karungali (Ebony) Wood in Shaiva Tradition</h3>\n[MAX 4 lines: Diospyros ebenum botanical name, Shaiva Siddhanta, Shani connection, Tamil Nadu heritage]\n<h3>What Seekers Experience with ${product.title}</h3>\n<ul>[4–5 bullets, DEEP-DIVE FORMAT: each bullet is <li><strong>[3-6 word benefit-topic label]:</strong> [2-3 full sentences, ~35-55 words, hedged with "seekers report/describe" — never a direct claim]</li> — covering grounding, focus, protection, Shani remediation]</ul>\n<h3>How Karungali Wood is Authenticated at RudraKailash</h3>\n[2–3 lines: species identification by grain pattern and wood density, Diospyros ebenum confirmed, sourced from certified artisans — NO X-ray language, NO RKRTL]\n<h3>Who Should Wear ${product.title}</h3>\n<ul>[4–5 bullets, DEEP-DIVE FORMAT: each bullet is <li><strong>[3-6 word seeker-profile label]:</strong> [2-3 full sentences, ~35-55 words]</li> — seeker profiles: Shani Mahadasha, Saturn transit, those seeking grounding, daily japa practitioners]</ul>\n<h3>How to Use Your ${product.title} — Wearing and Care</h3>\n<ul>[4–5 bullets: day to begin wearing (Saturday), mantra (Om Sham Shanicharaya Namah), care — no oil, store dry, avoid water immersion]</ul>\n<h3>Frequently Asked Questions About ${product.title}</h3>\n[4 FAQs covering: what is karungali, Shani benefits, care, authenticity. MANDATORY EXACT HTML TEMPLATE — repeat this block once per question, numbered 1-4; do NOT use <dl>/<dt>/<dd> tags, they render as an undifferentiated wall of text on this theme (no CSS styles them distinctly):\n<div style="margin-bottom:20px"><p style="font-weight:bold;margin:0 0 6px 0">1. [Question]</p><p style="margin:0">[Answer]</p></div>]\n\n${kwPlacementInstructions}\n\nCONTENT GAPS TO COVER: ${gapSummary}\nCURRENT DESCRIPTION (for reference only): ${descPlain}\n\nOUTPUT: Clean HTML only, starting with <h2>. CRITICAL: No RKRTL, no X-ray, no Elaeocarpus ganitrus — this is WOOD not a Rudraksha bead.`
+    : isSphatik
+    ? `Write a concise SEO product description for "${product.title}" on RudraKailash.com.\n\nMAIN KEYWORD: ${product.title}\n\nPRODUCT CONTEXT:\n- Material: Sphatik — natural rock crystal (clear quartz, chemically silicon dioxide)\n- Associated deity/planet: Goddess Lakshmi and the Moon (Chandra) in Vedic tradition\n- Authentication: refractive index testing and/or Mohs hardness testing (natural quartz = 7 on the Mohs scale) — this is a real, verifiable physical test; state it directly and factually, no hedging\n- Traditional use: meditation, purity, clarity, often worn or kept alongside Rudraksha\n- Main fraud risk in this category: glass sold as Sphatik, which is both optically and mechanically softer than genuine quartz — this is precisely what the hardness/refractive-index test distinguishes\n\nSTRUCTURE:\n<h2>${product.title} — Natural Sphatik (Rock Crystal)</h2>\n<p>[2–3 sentences: keyword in first sentence, material (natural rock crystal / clear quartz), traditional significance, seeker hook — NO deity name here]</p>\n<h3>Significance of Sphatik in Vedic Tradition</h3>\n[MAX 4 lines: natural quartz identity, association with Goddess Lakshmi and Chandra, purity/clarity symbolism]\n<h3>What Seekers Experience with ${product.title}</h3>\n<ul>[4–5 bullets, DEEP-DIVE FORMAT: each bullet is <li><strong>[3-6 word benefit-topic label]:</strong> [2-3 full sentences, ~35-55 words, hedged with "seekers report/describe" — never a direct claim]</li> — covering mental clarity, calm, purification]</ul>\n<h3>How Sphatik is Authenticated at RudraKailash</h3>\n[2–3 lines, DIRECT factual language, no hedging: refractive index and/or Mohs hardness testing (natural quartz = 7), distinguishing genuine crystal from glass imitations — NO X-ray, NO RKRTL, NO Elaeocarpus ganitrus]\n<h3>Who Should Wear ${product.title}</h3>\n<ul>[4–5 bullets, DEEP-DIVE FORMAT: each bullet is <li><strong>[3-6 word seeker-profile label]:</strong> [2-3 full sentences, ~35-55 words]</li> — seeker profiles: those seeking clarity, calm, meditation practice]</ul>\n<h3>How to Use Your ${product.title} — Wearing and Care</h3>\n<ul>[4–5 bullets: cleansing (e.g. moonlight, water), storage away from direct sunlight, handling with care as a natural mineral]</ul>\n<h3>Frequently Asked Questions About ${product.title}</h3>\n[4 FAQs covering: what Sphatik is, how it's authenticated, who should wear it, care instructions. MANDATORY EXACT HTML TEMPLATE — repeat this block once per question, numbered 1-4; do NOT use <dl>/<dt>/<dd> tags, they render as an undifferentiated wall of text on this theme (no CSS styles them distinctly):\n<div style="margin-bottom:20px"><p style="font-weight:bold;margin:0 0 6px 0">1. [Question]</p><p style="margin:0">[Answer]</p></div>]\n\n${kwPlacementInstructions}\n\nCONTENT GAPS TO COVER: ${gapSummary}\nCURRENT DESCRIPTION (for reference only): ${descPlain}\n\nOUTPUT: Clean HTML only, starting with <h2>. CRITICAL: No RKRTL, no X-ray, no Elaeocarpus ganitrus, no mukhi/face-count language — this is a MINERAL not a Rudraksha bead.`
+    : isTulsi
+    ? `Write a concise SEO product description for "${product.title}" on RudraKailash.com.\n\nMAIN KEYWORD: ${product.title}\n\nPRODUCT CONTEXT:\n- Material: Tulsi (Holy Basil) — botanical name Ocimum tenuiflorum\n- Associated deity: Lord Vishnu and Krishna, Vaishnava tradition\n- Authentication: NONE ESTABLISHED — RudraKailash does not currently have a verified testing/authentication method for Tulsi. Do NOT invent, imply, or reference any certification, testing, or verification claim (no "RKRTL," no "certified," no "verified authentic," no "tested"). Describe sourcing plainly instead (e.g. "sourced from Tulsi plants") without attaching an unsupported verification claim.\n- Traditional use: japa mala, daily wear, Vaishnava devotional practice\n\nSTRUCTURE:\n<h2>${product.title} — Sacred Tulsi (Holy Basil) Mala</h2>\n<p>[2–3 sentences: keyword in first sentence, material (Ocimum tenuiflorum / Holy Basil), traditional significance, seeker hook — NO deity name here, NO authentication/certification claim of any kind]</p>\n<h3>Significance of Tulsi in Vaishnava Tradition</h3>\n[MAX 4 lines: Ocimum tenuiflorum botanical name, Vishnu/Krishna association, devotional significance]\n<h3>What Seekers Experience with ${product.title}</h3>\n<ul>[4–5 bullets, DEEP-DIVE FORMAT: each bullet is <li><strong>[3-6 word benefit-topic label]:</strong> [2-3 full sentences, ~35-55 words, hedged with "seekers report/describe" — never a direct claim]</li> — covering devotional focus, purity, daily practice support]</ul>\n<h3>Sourcing of ${product.title}</h3>\n[2–3 lines: plainly describe sourcing (e.g. from Tulsi plants) — DO NOT claim any authentication, testing, or certification process, since none is currently established for this product]\n<h3>Who Should Wear ${product.title}</h3>\n<ul>[4–5 bullets, DEEP-DIVE FORMAT: each bullet is <li><strong>[3-6 word seeker-profile label]:</strong> [2-3 full sentences, ~35-55 words]</li> — seeker profiles: Vaishnava devotees, daily japa practitioners]</ul>\n<h3>How to Use Your ${product.title} — Wearing and Care</h3>\n<ul>[4–5 bullets: traditional wearing guidance, care — no chemicals, keep dry]</ul>\n<h3>Frequently Asked Questions About ${product.title}</h3>\n[4 FAQs covering: what Tulsi mala is, its significance, who should wear it, care instructions. Do NOT include a question about authentication/certification, since none exists for this product. MANDATORY EXACT HTML TEMPLATE — repeat this block once per question, numbered 1-4; do NOT use <dl>/<dt>/<dd> tags, they render as an undifferentiated wall of text on this theme (no CSS styles them distinctly):\n<div style="margin-bottom:20px"><p style="font-weight:bold;margin:0 0 6px 0">1. [Question]</p><p style="margin:0">[Answer]</p></div>]\n\n${kwPlacementInstructions}\n\nCONTENT GAPS TO COVER: ${gapSummary}\nCURRENT DESCRIPTION (for reference only): ${descPlain}\n\nOUTPUT: Clean HTML only, starting with <h2>. CRITICAL: No RKRTL, no X-ray, no Elaeocarpus ganitrus, no mukhi language, and absolutely NO authentication/certification/testing claim of any kind — this is WOOD not a Rudraksha bead, and no verification process currently exists for it.`
+    : `Write a concise SEO product description for "${product.title}" on RudraKailash.com.\n\nMAIN KEYWORD: ${product.title}\n${originBlock}\n${mukhiFactsBlock}\n${anchorContentBlock}\nSTRUCTURE:\n<h2>${product.title} — Authentic RKRTL-Certified Rudraksha Bead</h2>\n<p>[2–3 sentences, IN THIS ORDER per the OPENING PARAGRAPH ORDER rule above: (1) primary traditional use-case / astrological remedy driving the purchase; (2) certification, first mention written in full per the LOCKED DEFINITION rule; (3) origin/species as supporting evidence, using the VERIFIED ORIGIN above — not a generic Nepal assumption]</p>\n<h3>Spiritual Significance of ${product.title} in Vedic Tradition</h3>\n[MAX 4 lines or <ul>: use the VERIFIED MUKHI FACTS above exactly — ruling deity, scripture references, mantra, planet, chakra. The deity name MUST appear at least once here (this is the one section it belongs in). Do not substitute a different deity, planet, or chakra than the one given.]\n<h3>Traditional Benefits Associated with ${product.title}</h3>\n<ul>[4–5 bullets, DEEP-DIVE FORMAT: each bullet is <li><strong>[3-6 word benefit-topic label]:</strong> [2-3 full sentences, ~35-55 words]</li>, one per seeker situation. Each bullet: hedge with "seekers report/describe" (required, no direct claims), THEN anchor it to one named specific from the VERIFIED MUKHI FACTS above — the scripture, mantra, planet, or chakra given, not an invented alternative. BANNED: a hedge with no named specific attached, e.g. "seekers report enhanced focus" alone. If a Traditional Use-Case Note is present above, one bullet MUST cover it in this same depth — this is a primary purchase driver for this product and must not be dropped or shortened.]</ul>\n<h3>RKRTL Certification — Verified Authentic ${product.title}</h3>\n[2–3 lines PLUS the VERIFIED ANCHOR CONTENT above woven in as direct, factual, non-hedged prose (not "seekers report" language) — do NOT include any verify/certificate links unless the anchor content explicitly supplies rkrtl.com/verify]\n<h3>Who Should Buy ${product.title} — Ideal Seekers</h3>\n<ul>[4–5 bullets, DEEP-DIVE FORMAT: each bullet is <li><strong>[3-6 word seeker-profile label]:</strong> [2-3 full sentences, ~35-55 words describing the seeker situation/life stage and, where natural, connecting back to the product's traditional association]</li>]</ul>\n<h3>How to Wear Your ${product.title} — Day, Mantra and Method</h3>\n<ul>[4–5 bullets: day to begin, thread/metal, mantra (use the VERIFIED MUKHI FACTS mantra), energisation steps]</ul>\n<h3>Frequently Asked Questions About ${product.title}</h3>\n[4 FAQs, one of which MUST cover origin using the VERIFIED ORIGIN above exactly — never default to Nepal if the block above states a different origin. If VERIFIED ANCHOR FAQ content is supplied above, ALL of those FAQs MUST be included (verbatim or lightly reworded, meaning unchanged) — expand beyond 4 FAQs if needed to fit every supplied anchor FAQ plus the origin FAQ, rather than dropping any. MANDATORY EXACT HTML TEMPLATE — repeat this block once per question, numbered 1-4; do NOT use <dl>/<dt>/<dd> tags, they render as an undifferentiated wall of text on this theme (no CSS styles them distinctly):\n<div style="margin-bottom:20px"><p style="font-weight:bold;margin:0 0 6px 0">1. [Question]</p><p style="margin:0">[Answer]</p></div>]\n\n${kwPlacementInstructions}\n\nCONTENT GAPS TO COVER: ${gapSummary}\nCURRENT DESCRIPTION (for reference only): ${descPlain}\n\nOUTPUT: Clean HTML only, starting with <h2>.`;
+
+  // ── Meta & Tags prompts — three-way branch ────────────────────────────────
+  const metaTitleUser = isService
+    ? `Write a meta title for "${product.title}" service on RudraKailash.com. Max 60 chars. Include service keyword + "RudraKailash". Do NOT mention RKRTL or certification.`
+    : isKarungali
+    ? `Write a meta title for "${product.title}" on RudraKailash.com. Max 60 chars. Include "Karungali" or "Ebony" + "RudraKailash". Do NOT mention RKRTL or X-ray.`
+    : isSphatik
+    ? `Write a meta title for "${product.title}" on RudraKailash.com. Max 60 chars. Include "Sphatik" or "Crystal" + "Natural" + "RudraKailash". Do NOT mention RKRTL or X-ray.`
+    : isTulsi
+    ? `Write a meta title for "${product.title}" on RudraKailash.com. Max 60 chars. Include "Tulsi" + "Sacred" or "Holy" + "RudraKailash". Do NOT mention RKRTL, X-ray, "certified," or "verified" — no authentication method is established for this product.`
+    : `Write a meta title for "${product.title}" on RudraKailash.com. LOCKED FORMAT — use this exact template, substituting only the mukhi/product name and the origin word, with identical wording and identical pipe spacing every time: "{Product Name} | Natural {Origin} Bead | RKRTL Certified | RudraKailash". The {Origin} word MUST be exactly this: "${origin && origin.metaShort ? origin.metaShort : "[no verified origin — omit the origin word and adjust template to \"Natural Bead\" instead]"}" — do not substitute "Nepali" or any other origin word regardless of what seems typical for Rudraksha in general; this product's verified origin is what's stated here. Example for a Nepal-origin product: "7 Mukhi Rudraksha | Natural Nepali Bead | RKRTL Certified | RudraKailash". Do not deviate from this template, add extra words, or reorder segments. Expected length is approximately 70-73 characters — this is intentional, do not shorten it to fit under 60.`;
+
+  const metaDescUser = isService
+    ? `Write a meta description for "${product.title}" service on RudraKailash.com. 145–155 characters. Mention MVS Vedapadasala vadhyars, authentic Vedic tradition, and include a booking CTA. Do NOT mention RKRTL.`
+    : isKarungali
+    ? `Write a meta description for "${product.title}" on RudraKailash.com. 145–155 characters. Mention authentic Karungali ebony wood, Tamil Nadu origin, Shani remedy, and include a buy CTA. Do NOT mention RKRTL or X-ray certification.`
+    : isSphatik
+    ? `Write a meta description for "${product.title}" on RudraKailash.com. 145–155 characters. Mention natural Sphatik (rock crystal), hardness/refractive-index verification, purity/clarity significance, and include a buy CTA. Do NOT mention RKRTL or X-ray.`
+    : isTulsi
+    ? `Write a meta description for "${product.title}" on RudraKailash.com. 145–155 characters. Mention sacred Tulsi (Holy Basil), Vaishnava devotional significance, and include a buy CTA. Do NOT mention RKRTL, X-ray, "certified," or "verified" — no authentication method is established for this product.`
+    : `Write a meta description for "${product.title}" on RudraKailash.com. Approximately 145–160 characters. Structure: [mukhi count + origin] + [RKRTL X-ray certified] + [unique benefit in neutral language] + [CTA: Shop/Buy/Order]. ${originBlock}Use that exact origin word/phrase in the description — do not substitute "Nepali" if a different origin is verified above. NEVER state a specific bead size in mm — natural size ranges vary widely by mukhi count and origin and current inventory varies by batch, so any invented mm figure risks being factually wrong. STRICT RULES: NO deity names. NO spiritual benefit claims like "attracts wealth" or "removes negativity". Position as a certified natural bead. Example structure (Nepal-origin product): "Genuine Nepali 5 Mukhi Rudraksha, RKRTL X-ray certified for authenticity. Worn for clarity and calm. Buy authentic — RudraKailash."`;
+
+  const tagsUser = isService
+    ? `Generate 10–12 Shopify product tags for the "${product.title}" service on RudraKailash.com. Current tags: "${product.tags||"none"}". Include: online puja, vedic service, MVS Vedapadasala, homa/puja type, coimbatore vadhyar, authentic vedic ritual, book online.`
+    : isKarungali
+    ? `Generate 10–12 Shopify product tags for "${product.title}" on RudraKailash.com. Current tags: "${product.tags||"none"}". Include: karungali, ebony mala, karungali mala, diospyros ebenum, shani remedy, saturn remedy, karungali bracelet, authentic ebony, tamil nadu, shaiva tradition, wood mala, protection mala.`
+    : isSphatik
+    ? `Generate 10–12 Shopify product tags for "${product.title}" on RudraKailash.com. Current tags: "${product.tags||"none"}". Include: sphatik, natural crystal, rock crystal, clear quartz, sphatik mala, lakshmi crystal, moon crystal, meditation crystal, purity stone, natural sphatik. No RKRTL or X-ray tags.`
+    : isTulsi
+    ? `Generate 10–12 Shopify product tags for "${product.title}" on RudraKailash.com. Current tags: "${product.tags||"none"}". Include: tulsi, tulsi mala, holy basil, ocimum tenuiflorum, vaishnav mala, krishna tulsi, japa mala, sacred tulsi, devotional mala. No RKRTL, X-ray, "certified," or "verified" tags — no authentication method is established for this product.`
+    : `Generate 10–12 Shopify product tags for "${product.title}". Current tags: "${product.tags||"none"}". Include mukhi number variants, rudraksha, RKRTL, certified, authentic, and relevant spiritual keywords. ${originBlock}Include an origin-specific tag matching that exact origin (e.g. "south indian rudraksha", "haridwar rudraksha", "indonesian rudraksha", or "nepali rudraksha" — whichever matches the VERIFIED ORIGIN above) — do not default to a Nepal tag if a different origin is verified.`;
+
+  const faqUser = isService
+    ? `Generate 6 voice-search FAQ pairs for the "${product.title}" service on RudraKailash.com.\n\nRules:\n- Natural spoken language questions\n- Answers 80-150 words, fully self-contained so each one stands alone as a citable passage — no dangling references to "as mentioned above"\n- Include: what the service is, who performs it (MVS Vedapadasala), how online delivery works, credentials (Kanchi Mutt VRNT), who should book, how to book\n- NO RKRTL certification language — this is a service not a product\n\nOutput ONLY JSON: [{"q":"Question?","a":"Answer, 80-150 words."},...] 6 items.`
+    : isKarungali
+    ? `Generate 6 voice-search FAQ pairs for "${product.title}" on RudraKailash.com.\n\nRules:\n- Natural spoken language questions\n- Answers 80-150 words, fully self-contained\n- Include: what karungali (ebony) wood is, Diospyros ebenum botanical identity, Shani/Saturn connection, Tamil Nadu/Shaiva Siddhanta origin, how authenticity is verified, care instructions\n- Authentication is by wood grain pattern, density, and species identification — NEVER X-ray, NEVER RKRTL, NEVER Elaeocarpus ganitrus — this is WOOD, not Rudraksha\n\nOutput ONLY JSON: [{"q":"Question?","a":"Answer, 80-150 words."},...] 6 items.`
+    : isSphatik
+    ? `Generate 6 voice-search FAQ pairs for "${product.title}" on RudraKailash.com.\n\nRules:\n- Natural spoken language questions\n- Answers 80-150 words, fully self-contained\n- Include: what Sphatik (natural rock crystal) is, its Vedic significance (Lakshmi, Chandra), how it's authenticated (refractive index / Mohs hardness testing — natural quartz = 7), who should wear it, care instructions\n- NEVER X-ray, NEVER RKRTL, NEVER Elaeocarpus ganitrus, NEVER mukhi language — this is a MINERAL, not Rudraksha\n\nOutput ONLY JSON: [{"q":"Question?","a":"Answer, 80-150 words."},...] 6 items.`
+    : isTulsi
+    ? `Generate 6 voice-search FAQ pairs for "${product.title}" on RudraKailash.com.\n\nRules:\n- Natural spoken language questions\n- Answers 80-150 words, fully self-contained\n- Include: what Tulsi (Holy Basil / Ocimum tenuiflorum) mala is, Vaishnava significance, who should wear it, care instructions\n- CRITICAL: no authentication/testing/certification method is established for this product — do NOT include a question about authenticity verification, and do NOT reference RKRTL, "certified," or "verified" anywhere\n- NEVER X-ray, NEVER Elaeocarpus ganitrus, NEVER mukhi language — this is a different plant genus entirely, not Rudraksha\n\nOutput ONLY JSON: [{"q":"Question?","a":"Answer, 80-150 words."},...] 6 items.`
+    : `Generate 6 voice-search FAQ pairs for "${product.title}" Rudraksha bead on RudraKailash.com.\n\n${originBlock}\n${mukhiFactsBlock}\n${anchorContentBlock}\nRules:\n- Natural spoken language questions\n- Answers 80-150 words, fully self-contained so each one stands alone as a citable passage — no dangling references to "as mentioned above"\n- Include: what it is, who should wear it, how to wear it, RKRTL authentication process, botanical species (per the SPECIES block above), buying advice\n- If VERIFIED ANCHOR FAQ content is supplied above, ALL of those FAQs MUST be included among the 6 pairs (verbatim or lightly reworded, meaning unchanged) — expand beyond 6 pairs if needed to fit every supplied anchor FAQ, rather than omitting any or inventing a substitute\n- If any answer touches origin, it MUST use the exact origin from the VERIFIED ORIGIN block above — do not default to Nepal or invent an alternate origin if a different one is stated there, and never state two different origins across different answers\n- If any answer touches botanical species, it MUST use the exact species from the SPECIES block above — do not default to Elaeocarpus ganitrus if a different species is stated there\n- If any answer touches deity, planet, chakra, or mantra, it MUST match the VERIFIED MUKHI FACTS above exactly — do not substitute or invent an alternative\n- Use "seekers report" framing for belief/tradition claims only — VERIFIED ANCHOR CONTENT claims are factual/operational and should stay direct, not hedged\n- If RKRTL is mentioned, expand it on first use exactly as "RKRTL (Kailasha Rudraksha Testing Laboratory)" — never any other expansion\n- NEVER state a specific bead size in mm or weight in grams in any answer\n\nOutput ONLY JSON: [{"q":"Question?","a":"Answer, 80-150 words."},...] 6 items.`;
+
+  const [description, metaTitle, metaDesc, tags, faq] = await Promise.allSettled([
+    callClaude(descSystem, descUser, 6000),
+    callClaude(`SEO specialist. Output ONLY the meta title text. No quotes. No explanation.`, metaTitleUser),
+    callClaude(`SEO specialist. Output ONLY the meta description text. No quotes. No explanation.`, metaDescUser),
+    callClaude(`Shopify SEO expert. Output ONLY comma-separated tags. No explanation.`, tagsUser),
+    callClaude(`Voice search SEO expert. Output ONLY valid JSON array. No markdown.`, faqUser, 2200),
+  ]);
+
+  let faqs = [];
+  if (faq.status === "fulfilled") {
+    try { faqs = JSON.parse(extractJsonValue(faq.value)); }
+    catch (e) { console.warn("FAQ JSON parse failed:", e.message, "— raw response (first 300 chars):", faq.value.slice(0, 300)); faqs = []; }
+  }
+
+  const result = {
+    description: description.status === "fulfilled" ? reformatFaqSection(ensureDeityPresent(stripHeadingSuffixes(stripTruncatedTrailingTag(description.value)), mukhiFacts, product.title)) : "<p>Generation failed. Please re-run the agent.</p>",
+    metaTitle:   metaTitle.status   === "fulfilled" ? metaTitle.value   : product.title,
+    metaDesc:    metaDesc.status    === "fulfilled" ? metaDesc.value    : "",
+    tags:        tags.status        === "fulfilled" ? tags.value        : product.tags || "",
+    faqs,
+  };
+
+  [description, metaTitle, metaDesc, tags, faq].forEach((r, i) => {
+    if (r.status === "rejected") console.error(`❌ Agent ${["description","metaTitle","metaDesc","tags","faq"][i]} failed:`, r.reason?.message || r.reason);
+  });
+
+  const keywords = await loadKeywordsAsync();
+  if (!keywords[product.id]) {
+    await saveKeywordEntryAsync({ productId: product.id, productTitle: product.title, keyword: autoKeyword(product.title), isCustom: false, addedAt: new Date().toISOString() });
+    console.log(`📊 Auto-registered for rank tracking: ${product.title}`);
+  }
+
+  const scoreBefore = scoreSEO(product.metafields_global_title_tag, product.metafields_global_description_tag, product.tags, product.body_html, isService, isKarungali, isSphatik, isTulsi);
+  const scoreAfter  = scoreSEO(result.metaTitle, result.metaDesc, result.tags, result.description, isService, isKarungali, isSphatik, isTulsi);
+  console.log(`✅ ${product.title}: ${scoreBefore} → ${scoreAfter}`);
+  return { ...result, scoreBefore, scoreAfter };
 }
 
-function toggleDescEdit() { document.getElementById("descPreview").style.display="none"; document.getElementById("newDesc").style.display="block"; }
-function toggleDescPreview() { document.getElementById("descPreview").innerHTML=cleanHTML(document.getElementById("newDesc").value); document.getElementById("descPreview").style.display="block"; document.getElementById("newDesc").style.display="none"; }
-
-// ─── Push to Shopify ──────────────────────────────────────────────────────────
-async function pushToShopify() {
-  if (!selectedProduct) return;
-  const pushBtn = document.getElementById("pushBtn");
-  pushBtn.disabled = true; pushBtn.textContent = "Pushing…";
+app.get("/approve/:token", async (req, res) => {
+  const approval = pendingApprovals.get(req.params.token);
+  if (!approval) return res.send(`<html><body style="font-family:sans-serif;background:#0D0500;color:#F5E6C8;display:flex;align-items:center;justify-content:center;height:100vh"><div style="text-align:center;padding:40px;border:1px solid #7B1C1C;border-radius:12px;background:#1A0A00;"><div style="font-size:48px">❌</div><h2 style="color:#F08080;margin:16px 0">Link Expired</h2><p style="color:#9A7050">This approval link has expired or was already used.</p></div></body></html>`);
   try {
-    const payload = { body_html: document.getElementById("newDesc").value, metafields_global_title_tag: document.getElementById("newMetaTitle").value, metafields_global_description_tag: document.getElementById("newMetaDesc").value, tags: document.getElementById("newTags").value };
-    const res  = await fetch(PROXY_URL + "/products/" + selectedProduct.id, { method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload) });
-    const data = await res.json();
-    if (data.success) {
-      pushBtn.textContent = "✅ Pushed!"; pushBtn.style.background = "var(--green)"; pushBtn.style.color = "#000";
-      await fetch(PROXY_URL + "/rank/keywords", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ productId: String(selectedProduct.id), productTitle: selectedProduct.title }) });
-      setTimeout(() => { pushBtn.disabled=false; pushBtn.textContent="🚀 Push to Shopify"; pushBtn.style.background=""; pushBtn.style.color=""; }, 3000);
-    } else throw new Error(data.error || "Push failed");
-  } catch (e) { pushBtn.textContent = "❌ Failed — Retry"; pushBtn.disabled = false; }
-}
+    const shopifyRes = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${approval.productId}.json`, { method:"PUT", headers:{"X-Shopify-Access-Token":storedAccessToken,"Content-Type":"application/json"}, body:JSON.stringify({product:{id:approval.productId,...approval.payload}}) });
+    const data = await shopifyRes.json();
+    pendingApprovals.delete(req.params.token);
+    if (shopifyRes.ok) {
+      res.send(`<html><body style="font-family:sans-serif;background:#0D0500;color:#F5E6C8;display:flex;align-items:center;justify-content:center;height:100vh"><div style="text-align:center;padding:40px;border:1px solid #D4A017;border-radius:12px;background:#1A0A00;max-width:500px"><div style="font-size:48px">✅</div><h2 style="color:#F0C84A;margin:16px 0">Pushed!</h2><p style="color:#9A7050"><strong style="color:#F5E6C8">${approval.productTitle}</strong> is live on RudraKailash.com</p><p style="color:#9A7050;margin-top:12px;font-size:13px">SEO: ${approval.scoreBefore} → ${approval.scoreAfter} (+${approval.scoreAfter-approval.scoreBefore} pts)</p></div></body></html>`);
+    } else throw new Error(JSON.stringify(data));
+  } catch (err) {
+    res.send(`<html><body style="font-family:sans-serif;background:#0D0500;display:flex;align-items:center;justify-content:center;height:100vh"><div style="text-align:center;padding:40px;border:1px solid #7B1C1C;border-radius:12px;background:#1A0A00;"><div style="font-size:48px">❌</div><h2 style="color:#F08080">Push Failed</h2><p style="color:#9A7050">${err.message}</p></div></body></html>`);
+  }
+});
 
-function resetUI() { document.getElementById("scoreSection").classList.add("hidden"); document.getElementById("compSection").classList.add("hidden"); document.getElementById("resultsSection").classList.add("hidden"); resetAgents(); }
-function copyToClipboard(elId) { const text=document.getElementById(elId).textContent; navigator.clipboard.writeText(text).then(()=>{ const btn=event.target,orig=btn.textContent; btn.textContent="✓ Copied!"; setTimeout(()=>btn.textContent=orig,2000); }); }
-function escHtml(str) { return (str||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
-
-// ─── Cannibalization ──────────────────────────────────────────────────────────
-async function runCannibalizationCheck() {
-  if (!isConnected || products.length === 0) { alert("No products loaded."); return; }
-  const btn = document.getElementById("cannBtn");
-  btn.disabled = true; btn.textContent = "Analysing…";
-  document.getElementById("cannResults").innerHTML = `<div class="cann-empty"><span class="spinner"></span><div style="color:var(--muted);margin-top:12px">Analysing ${products.length} products…</div></div>`;
-  try {
-    const batchSize = 30, allConflicts = [];
-    for (let i = 0; i < products.length; i += batchSize) {
-      const batch = products.slice(i, i+batchSize);
-      const raw = await aiGenerate(`Shopify SEO cannibalization analyst. Output ONLY valid JSON array. No markdown.`,
-        `Analyse these ${batch.length} products for keyword cannibalization:\n${batch.map((p,idx)=>`${i+idx+1}. "${p.title}" | Tags: ${(p.tags||"").split(",").slice(0,8).join(", ")||"none"}`).join("\n")}\n\nOutput ONLY JSON: [{"products":["title1","title2"],"sharedKeywords":["kw1"],"severity":"high","recommendation":"fix"}] or []`, 2000);
-      try { allConflicts.push(...JSON.parse(extractJsonValue(raw))); } catch(e) { console.warn("Cannibalization JSON parse failed:", e.message, "— raw response (first 300 chars):", raw.slice(0, 300)); }
-      if (i+batchSize < products.length) await new Promise(r=>setTimeout(r,1000));
-    }
-    const affectedTitles = new Set(); allConflicts.forEach(c=>c.products.forEach(p=>affectedTitles.add(p)));
-    document.getElementById("cannStats").style.display="grid";
-    document.getElementById("cannStatProducts").textContent=products.length;
-    document.getElementById("cannStatConflicts").textContent=allConflicts.length;
-    document.getElementById("cannStatAffected").textContent=affectedTitles.size;
-    if (allConflicts.length === 0) { document.getElementById("cannResults").innerHTML=`<div class="cann-empty"><div style="font-size:48px;margin-bottom:16px">✅</div><div style="color:var(--green);font-size:14px">No significant keyword cannibalization detected</div></div>`; }
-    else {
-      allConflicts.sort((a,b)=>({high:0,medium:1,low:2}[a.severity]||2)-({high:0,medium:1,low:2}[b.severity]||2));
-      document.getElementById("cannResults").innerHTML = allConflicts.map((c,i)=>{
-        const sevClass=c.severity==="high"?"sev-high":c.severity==="medium"?"sev-med":"sev-low";
-        const sevLabel=c.severity==="high"?"🔴 HIGH":c.severity==="medium"?"🟡 MEDIUM":"🟢 LOW";
-        return `<div class="conflict-card"><div class="conflict-header"><div style="color:var(--cream);font-size:13px">Conflict #${i+1}</div><span class="conflict-severity ${sevClass}">${sevLabel}</span></div><div class="conflict-products">${(c.products||[]).map(p=>`<div class="conflict-product">📄 ${escHtml(p)}</div>`).join("")}</div><div class="conflict-shared"><div style="font-size:11px;color:var(--muted);margin-bottom:4px">COMPETING FOR:</div>${(c.sharedKeywords||[]).map(kw=>`<span class="shared-kw">${escHtml(kw)}</span>`).join("")}</div>${c.recommendation?`<div style="margin-top:10px;padding:8px 12px;background:var(--surface2);border-radius:5px;font-size:12px;color:var(--gold)">💡 ${escHtml(c.recommendation)}</div>`:""}</div>`;
-      }).join("");
-    }
-  } catch(e) { document.getElementById("cannResults").innerHTML=`<div class="cann-empty" style="color:var(--red)">Analysis failed: ${e.message}</div>`; }
-  btn.disabled=false; btn.textContent="▶ Re-analyse";
-}
-
-// ─── Seasonal Panel ───────────────────────────────────────────────────────────
-function renderSeasonalPanel() {
-  const today = new Date();
-  const festivals = [
-    { name:"Mahashivratri", date:"2026-02-26", mukhis:["1 Mukhi","Rudraksha Mala","14 Mukhi"], icon:"🔱" },
-    { name:"Gudi Padwa / Ugadi", date:"2026-03-19", mukhis:["1 Mukhi","5 Mukhi","Gauri Shankar"], icon:"🪔" },
-    { name:"Ram Navami", date:"2026-04-07", mukhis:["12 Mukhi","8 Mukhi","Rudraksha Mala"], icon:"🏹" },
-    { name:"Shravan Month Starts", date:"2026-07-17", mukhis:["Rudraksha Mala","5 Mukhi","1 Mukhi","14 Mukhi"], icon:"🌙" },
-    { name:"Nag Panchami", date:"2026-07-29", mukhis:["8 Mukhi","Rudraksha Mala"], icon:"🐍" },
-    { name:"Raksha Bandhan", date:"2026-08-13", mukhis:["Gauri Shankar","5 Mukhi","Rudraksha Bracelet"], icon:"🎀" },
-    { name:"Ganesh Chaturthi", date:"2026-08-23", mukhis:["Ganesh Mukhi","8 Mukhi","Ganapati Bead"], icon:"🐘" },
-    { name:"Navratri Starts", date:"2026-10-09", mukhis:["Gauri Shankar","9 Mukhi","Navdurga Mala"], icon:"🪔" },
-    { name:"Dussehra", date:"2026-10-18", mukhis:["12 Mukhi","10 Mukhi","Rudraksha Mala"], icon:"⚔️" },
-    { name:"Diwali", date:"2026-11-07", mukhis:["Gauri Shankar","14 Mukhi","Rudraksha Gift Sets"], icon:"✨" },
-    { name:"Karthik Purnima", date:"2026-11-22", mukhis:["Rudraksha Mala","5 Mukhi","1 Mukhi"], icon:"🌕" },
-  ];
-  document.getElementById("seasonalGrid").innerHTML = festivals.map(f => {
-    const diff = Math.round((new Date(f.date)-today)/(1000*60*60*24));
-    const daysBadge = diff < 0 ? `<span class="seasonal-days" style="background:#1A1A1A;color:var(--muted)">Passed</span>`
-      : diff <= 14 ? `<span class="seasonal-days days-urgent">⚡ ${diff}d away</span>`
-      : diff <= 30 ? `<span class="seasonal-days days-soon">⏳ ${diff}d away</span>`
-      : `<span class="seasonal-days days-upcoming">${diff}d away</span>`;
-    return `<div class="seasonal-card"><div class="seasonal-festival">${f.icon} ${f.name} ${daysBadge}</div><div class="seasonal-date">📅 ${new Date(f.date).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"})}</div><div style="font-size:11px;color:var(--muted);margin-bottom:6px">SEO-push 2–3 weeks before:</div><div class="seasonal-products">${f.mukhis.map(m=>`<span class="seasonal-prod-pill">${m}</span>`).join("")}</div></div>`;
+function buildApprovalEmail(results, triggerType) {
+  const totalProducts = results.length;
+  const avgBefore = Math.round(results.reduce((s,r) => s+r.scoreBefore, 0) / totalProducts);
+  const avgAfter  = Math.round(results.reduce((s,r) => s+r.scoreAfter,  0) / totalProducts);
+  const triggered = triggerType==="webhook" ? "New Product Added" : triggerType==="manual" ? "Manual Trigger" : "Weekly Scheduled Run";
+  const productRows = results.map(r => {
+    const approvalToken = generateApprovalToken();
+    pendingApprovals.set(approvalToken, { productId:r.productId, productTitle:r.productTitle, payload:r.payload, scoreBefore:r.scoreBefore, scoreAfter:r.scoreAfter, createdAt:new Date() });
+    return `<tr style="border-bottom:1px solid #2E1500"><td style="padding:12px 16px;color:#F5E6C8;font-size:13px">${r.productTitle}</td><td style="padding:12px 16px;text-align:center;color:#F08080;font-weight:bold">${r.scoreBefore}</td><td style="padding:12px 16px;text-align:center;color:#7FD48A;font-weight:bold">${r.scoreAfter}</td><td style="padding:12px 16px;text-align:center;color:#F0C84A;font-weight:bold">+${r.scoreAfter-r.scoreBefore}</td><td style="padding:12px 16px;text-align:center"><a href="${APP_URL}/approve/${approvalToken}" style="background:#D4A017;color:#0D0500;padding:6px 16px;border-radius:5px;text-decoration:none;font-size:12px;font-weight:bold">✓ Approve &amp; Push</a></td></tr>`;
   }).join("");
+  const faqBlocks = results.filter(r => r.faqs && r.faqs.length > 0).map(r => {
+    const qas = r.faqs.map((f,i) => `<div style="margin-bottom:12px"><p style="color:#F0C84A;font-size:12px;font-weight:bold;margin:0 0 4px 0">${i+1}. ${escapeFaqText(f.q)}</p><p style="color:#9A7050;font-size:12px;margin:0;line-height:1.5">${escapeFaqText(f.a)}</p></div>`).join("");
+    return `<div style="background:#120600;border:1px solid #2E1500;border-radius:8px;padding:16px 18px;margin-bottom:12px"><div style="color:#F5E6C8;font-size:13px;font-weight:bold;margin-bottom:10px">${r.productTitle}</div>${qas}</div>`;
+  }).join("");
+  const faqSection = faqBlocks ? `<div style="margin-top:24px"><div style="color:#9A7050;font-size:11px;letter-spacing:1px;margin-bottom:12px">GENERATED FAQ — COPY TO SCHEMA PLUS</div>${faqBlocks}</div>` : "";
+  const bulkToken = generateApprovalToken();
+  pendingApprovals.set("bulk_" + bulkToken, { isBulk: true, productTokens: results.map(r => [...pendingApprovals.entries()].find(([k, v]) => !v.isBulk && v.productId === r.productId && v.productTitle === r.productTitle)?.[0]).filter(Boolean), createdAt: new Date() });
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"/></head><body style="margin:0;padding:0;background:#0D0500;font-family:Georgia,serif"><div style="max-width:680px;margin:0 auto;padding:32px 20px"><div style="text-align:center;margin-bottom:32px"><div style="font-size:36px">ॐ</div><h1 style="color:#F0C84A;font-size:22px;margin:0">RudraKailash SEO Agent</h1><p style="color:#9A7050;font-size:13px;margin:4px 0">Automated Optimisation Report · ${triggered}</p><p style="color:#5A3020;font-size:12px">${new Date().toLocaleString("en-IN",{timeZone:"Asia/Kolkata"})} IST</p></div><div style="background:#1A0A00;border:1px solid #2E1500;border-radius:10px;padding:20px;margin-bottom:24px"><table width="100%"><tr><td style="text-align:center"><div style="color:#9A7050;font-size:11px;letter-spacing:1px">PRODUCTS</div><div style="color:#F0C84A;font-size:28px;font-weight:bold">${totalProducts}</div></td><td style="text-align:center"><div style="color:#9A7050;font-size:11px;letter-spacing:1px">AVG BEFORE</div><div style="color:#F08080;font-size:28px;font-weight:bold">${avgBefore}</div></td><td style="text-align:center"><div style="color:#9A7050;font-size:11px;letter-spacing:1px">AVG AFTER</div><div style="color:#7FD48A;font-size:28px;font-weight:bold">${avgAfter}</div></td><td style="text-align:center"><div style="color:#9A7050;font-size:11px;letter-spacing:1px">IMPROVEMENT</div><div style="color:#F0C84A;font-size:28px;font-weight:bold">+${avgAfter-avgBefore}</div></td></tr></table></div><div style="text-align:center;margin-bottom:20px"><a href="${APP_URL}/approve-all/${bulkToken}" style="display:inline-block;background:#D4A017;color:#0D0500;padding:14px 36px;border-radius:8px;text-decoration:none;font-size:15px;font-weight:bold;letter-spacing:0.5px">🔱 Bulk Approve All ${totalProducts} Products</a><p style="color:#5A3020;font-size:11px;margin-top:8px">Pushes all AI suggestions live in one click · Cannot be undone</p></div><table style="width:100%;border-collapse:collapse;background:#120600;border:1px solid #2E1500;border-radius:10px;overflow:hidden"><thead><tr style="background:#160800"><th style="padding:10px 16px;text-align:left;color:#9A7050;font-size:11px;font-weight:normal">PRODUCT</th><th style="padding:10px 16px;text-align:center;color:#9A7050;font-size:11px;font-weight:normal">BEFORE</th><th style="padding:10px 16px;text-align:center;color:#9A7050;font-size:11px;font-weight:normal">AFTER</th><th style="padding:10px 16px;text-align:center;color:#9A7050;font-size:11px;font-weight:normal">GAIN</th><th style="padding:10px 16px;text-align:center;color:#9A7050;font-size:11px;font-weight:normal">ACTION</th></tr></thead><tbody>${productRows}</tbody></table>${faqSection}<div style="text-align:center;margin-top:32px;padding-top:20px;border-top:1px solid #2E1500"><p style="color:#5A3020;font-size:11px">RudraKailash Agentic SEO · Approval links expire in 7 days</p></div></div></body></html>`;
 }
 
-// ─── Rank Tracker ─────────────────────────────────────────────────────────────
-async function loadRankData() {
+app.get("/approve-all/:token", async (req, res) => {
+  const bulkKey = "bulk_" + req.params.token;
+  const bulk    = pendingApprovals.get(bulkKey);
+  if (!bulk || !bulk.isBulk) return res.send(`<html><body style="font-family:sans-serif;background:#0D0500;color:#F5E6C8;display:flex;align-items:center;justify-content:center;height:100vh"><div style="text-align:center;padding:40px;border:1px solid #7B1C1C;border-radius:12px;background:#1A0A00;"><div style="font-size:48px">❌</div><h2 style="color:#F08080;margin:16px 0">Link Expired</h2></div></body></html>`);
+  let pushed = 0, failed = 0;
+  const details = [];
+  for (const token of bulk.productTokens) {
+    const approval = pendingApprovals.get(token);
+    if (!approval) { failed++; continue; }
+    try {
+      const shopifyRes = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${approval.productId}.json`, { method:"PUT", headers:{"X-Shopify-Access-Token":storedAccessToken,"Content-Type":"application/json"}, body:JSON.stringify({ product:{ id:approval.productId, ...approval.payload } }) });
+      if (shopifyRes.ok) { pushed++; details.push(`<li style="color:#7FD48A;padding:4px 0">✅ ${approval.productTitle} — SEO: ${approval.scoreBefore} → ${approval.scoreAfter}</li>`); pendingApprovals.delete(token); }
+      else { failed++; details.push(`<li style="color:#F08080;padding:4px 0">❌ ${approval.productTitle} — Push failed</li>`); }
+    } catch(e) { failed++; details.push(`<li style="color:#F08080;padding:4px 0">❌ ${approval.productTitle} — ${e.message}</li>`); }
+    await new Promise(r => setTimeout(r, 500));
+  }
+  pendingApprovals.delete(bulkKey);
+  res.send(`<html><body style="font-family:sans-serif;background:#0D0500;color:#F5E6C8;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px;box-sizing:border-box"><div style="text-align:center;padding:40px;border:1px solid #D4A017;border-radius:12px;background:#1A0A00;max-width:560px;width:100%"><div style="font-size:48px">🔱</div><h2 style="color:#F0C84A;margin:16px 0">Bulk Push Complete</h2><p style="color:#9A7050;margin-bottom:20px">${pushed} pushed · ${failed} failed</p><ul style="list-style:none;padding:0;margin:0 0 20px;text-align:left;font-size:13px;max-height:400px;overflow-y:auto">${details.join("")}</ul></div></body></html>`);
+});
+
+cron.schedule("30 17 * * 0", async () => {
+  console.log("⏰ Weekly SEO cron — Sunday 11pm IST");
+  if (!storedAccessToken) return;
   try {
-    const res = await fetch(PROXY_URL + "/rank/data");
-    const data = await res.json();
-    rankDataCache = data.rankData || {}; keywordsCache = data.keywords || {};
-    const badge = document.getElementById("rankStorageBadge");
-    if (badge) {
-      badge.textContent = data.storage === "mysql" ? "· 🗄️ MySQL (Hostinger)" : "· 📄 Local JSON";
-      badge.style.color = data.storage === "mysql" ? "var(--green)" : "var(--muted)";
+    const res      = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products.json?limit=250&fields=id,title,body_html,tags,handle,status,metafields_global_title_tag,metafields_global_description_tag`, { headers:{"X-Shopify-Access-Token":storedAccessToken} });
+    const data     = await res.json();
+    const products = (data.products||[]).filter(p => p.status==="active");
+    const results  = [];
+    for (const product of products) {
+      try {
+        const r = await runSEOPipeline(product);
+        results.push({ productId:product.id, productTitle:product.title, scoreBefore:r.scoreBefore, scoreAfter:r.scoreAfter, faqs:r.faqs, payload:{ body_html:r.description, metafields_global_title_tag:r.metaTitle, metafields_global_description_tag:r.metaDesc, tags:r.tags } });
+        await new Promise(r => setTimeout(r, 3000));
+      } catch(e) { console.error(`Cron failed for ${product.title}:`, e.message); }
     }
-    renderRankTable();
-  } catch(e) { console.error("Load rank data failed:", e); }
-}
+    if (results.length > 0) await sendEmail(`🔱 RudraKailash SEO Weekly Report — ${results.length} products`, buildApprovalEmail(results, "cron"));
+  } catch(e) { console.error("Weekly cron error:", e.message); }
+}, { timezone: "UTC" });
 
-function renderRankTable() {
-  const tbody = document.getElementById("rankTableBody");
-  const allIds = new Set([...Object.keys(rankDataCache),...Object.keys(keywordsCache)]);
-  if (allIds.size === 0) { tbody.innerHTML=`<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--muted)">No products tracked yet.</td></tr>`; updateRankStats([]); return; }
-  const rows = [];
-  allIds.forEach(id => {
-    const re=rankDataCache[id]||{},ke=keywordsCache[id]||{};
-    const history=re.history||[],latest=history[history.length-1]||{},prev=history[history.length-8]||{};
-    const posIN=latest.posIN||null,posGlobal=latest.posGlobal||null,prevIN=prev.posIN||null;
-    const deltaIN=prevIN&&posIN?prevIN-posIN:null;
-    rows.push({ id, title:re.productTitle||ke.productTitle||"Unknown", keyword:re.keyword||ke.keyword||"—", posIN, posGlobal, deltaIN, lastChecked:re.lastChecked?new Date(re.lastChecked).toLocaleDateString("en-IN"):"Never", isCustom:ke.isCustom||false, hasHistory:history.length>0 });
-  });
-  updateRankStats(rows);
-  tbody.innerHTML = rows.map(r => `<tr>
-    <td style="color:var(--cream);font-size:13px;max-width:180px">${r.title}</td>
-    <td><input class="keyword-input" style="width:200px" value="${r.keyword}" id="kw-${r.id}" onchange="updateKeyword('${r.id}','${encodeURIComponent(r.title)}')" title="${r.isCustom?'Custom':'Auto-generated'} keyword"/>${r.isCustom?'<span style="font-size:10px;color:var(--gold);margin-left:4px">✎ custom</span>':''}</td>
-    <td style="text-align:center">${posBadge(r.posIN)}</td>
-    <td style="text-align:center">${posBadge(r.posGlobal)}</td>
-    <td style="text-align:center">${trendBadge(r.deltaIN,r.hasHistory)}</td>
-    <td style="color:var(--muted);font-size:12px">${r.lastChecked}</td>
-    <td><div class="flex" style="gap:6px"><button class="btn btn-secondary btn-sm" onclick="checkOneProduct('${r.id}')">Check</button>${r.hasHistory?`<button class="btn btn-secondary btn-sm" onclick="showChart('${r.id}','${r.title.replace(/'/g,"\\'")}')">📈</button>`:''}<button class="btn btn-danger btn-sm" onclick="removeTracking('${r.id}')">✕</button></div></td>
-  </tr>`).join("");
-}
-
-function posBadge(pos) {
-  if (!pos) return `<span class="pos-badge pos-none">Not found</span>`;
-  const cls=pos<=3?"pos-1-3":pos<=10?"pos-4-10":pos<=30?"pos-11-30":"pos-31-100";
-  return `<span class="pos-badge ${cls}">#${pos}</span>`;
-}
-function trendBadge(delta, hasHistory) {
-  if (!hasHistory) return `<span class="trend-new">New — checking</span>`;
-  if (delta===null) return `<span class="trend-same">—</span>`;
-  if (delta>0) return `<span class="trend-up">▲ ${delta} up</span>`;
-  if (delta<0) return `<span class="trend-down">▼ ${Math.abs(delta)} down</span>`;
-  return `<span class="trend-same">→ same</span>`;
-}
-function updateRankStats(rows) {
-  document.getElementById("statTracked").textContent=rows.length;
-  document.getElementById("statTop10").textContent=rows.filter(r=>r.posIN&&r.posIN<=10).length;
-  document.getElementById("statTop50").textContent=rows.filter(r=>r.posIN&&r.posIN<=50).length;
-  document.getElementById("statNotFound").textContent=rows.filter(r=>!r.posIN).length;
-}
-async function updateKeyword(productId, encodedTitle) {
-  const kwInput=document.getElementById("kw-"+productId); if(!kwInput) return;
-  const keyword=kwInput.value.trim(); if(!keyword) return;
-  await fetch(PROXY_URL+"/rank/keywords",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({productId,productTitle:decodeURIComponent(encodedTitle),keyword,isCustom:true})});
-  await loadRankData();
-}
-async function checkOneProduct(productId) {
-  const btn=event.target; btn.textContent="Checking…"; btn.disabled=true;
-  await fetch(PROXY_URL+"/rank/check/"+productId,{method:"POST"});
-  setTimeout(async()=>{await loadRankData();btn.textContent="Check";btn.disabled=false;},35000);
-}
-async function triggerAllChecks() {
-  const btn=event.target; btn.textContent="Checking all…"; btn.disabled=true;
-  for (const id of Object.keys(keywordsCache)) { await fetch(PROXY_URL+"/rank/check/"+id,{method:"POST"}); await new Promise(r=>setTimeout(r,2000)); }
-  setTimeout(async()=>{await loadRankData();btn.textContent="▶ Check All Now";btn.disabled=false;},40000);
-}
-async function removeTracking(productId) {
-  if(!confirm("Remove from rank tracking?")) return;
-  await fetch(PROXY_URL+"/rank/keywords/"+productId,{method:"DELETE"});
-  await loadRankData();
-}
-function showChart(productId, title) {
-  const entry=rankDataCache[productId]; if(!entry||!entry.history?.length) return;
-  document.getElementById("chartSection").style.display="block";
-  document.getElementById("chartTitle").textContent=`📈 ${title}`;
-  const history=entry.history.slice(-30);
-  if (rankChart) rankChart.destroy();
-  const ctx=document.getElementById("rankChart").getContext("2d");
-  rankChart=new Chart(ctx,{type:"line",data:{labels:history.map(h=>h.date),datasets:[
-    {label:"Google.co.in",data:history.map(h=>h.posIN||null),borderColor:"#7FD48A",backgroundColor:"rgba(127,212,138,.1)",tension:.3,pointRadius:4,spanGaps:true},
-    {label:"Google.com",data:history.map(h=>h.posGlobal||null),borderColor:"#80C0F0",backgroundColor:"rgba(128,192,240,.1)",tension:.3,pointRadius:4,spanGaps:true},
-  ]},options:{responsive:true,maintainAspectRatio:false,scales:{y:{reverse:true,min:1,max:100,title:{display:true,text:"Position (lower = better)",color:"#9A7050"},grid:{color:"#2E1500"},ticks:{color:"#9A7050"}},x:{grid:{color:"#2E1500"},ticks:{color:"#9A7050",maxTicksLimit:10}}},plugins:{legend:{labels:{color:"#F5E6C8"}},tooltip:{callbacks:{label:ctx=>`${ctx.dataset.label}: Position #${ctx.raw}`}}}}});
-  document.getElementById("chartSection").scrollIntoView({behavior:"smooth"});
-}
-function hideChart() { document.getElementById("chartSection").style.display="none"; if(rankChart){rankChart.destroy();rankChart=null;} }
-
-// ─── Options ──────────────────────────────────────────────────────────────────
-function saveOptions() {
-  PROXY_URL=document.getElementById("proxyUrl").value.trim().replace(/\/$/,"");
-  localStorage.setItem("rk_proxy_url",PROXY_URL);
-  document.getElementById("optionsMsg").textContent="✅ Saved. Reconnecting…";
-  checkConnection();
-}
-async function testConnection() {
+app.post("/webhooks/products/create", async (req, res) => {
+  res.status(200).json({ received: true });
+  const product = req.body;
+  if (!product?.id) return;
+  console.log(`🔔 Webhook: New product — ${product.title}`);
+  await new Promise(r => setTimeout(r, 5000));
   try {
-    const res=await fetch(PROXY_URL+"/"); const data=await res.json();
-    document.getElementById("optionsMsg").innerHTML=`✅ Connected · Anthropic:${data.anthropicKeyConfigured?"✅":"❌"} · Serper:${data.serperConfigured?"✅":"❌"} · Email:${data.emailConfigured?"✅":"❌"} · Tracked:${data.rankTracking?.trackedProducts||0}`;
-  } catch(e) { document.getElementById("optionsMsg").textContent="❌ Cannot reach proxy: "+e.message; }
-}
-async function triggerCron() {
-  const secret=prompt("Enter Shopify Client Secret:"); if(!secret) return;
-  const res=await fetch(PROXY_URL+"/cron/trigger?secret="+secret,{method:"POST"});
-  const data=await res.json(); alert(data.message||"Triggered.");
-}
+    const productRes  = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${product.id}.json?fields=id,title,body_html,tags,handle,status,metafields_global_title_tag,metafields_global_description_tag`, { headers:{"X-Shopify-Access-Token":storedAccessToken} });
+    const fullProduct = (await productRes.json()).product;
+    if (!fullProduct) return;
+    const r = await runSEOPipeline(fullProduct);
+    const results = [{ productId:fullProduct.id, productTitle:fullProduct.title, scoreBefore:r.scoreBefore, scoreAfter:r.scoreAfter, faqs:r.faqs, payload:{ body_html:r.description, metafields_global_title_tag:r.metaTitle, metafields_global_description_tag:r.metaDesc, tags:r.tags } }];
+    await sendEmail(`🔔 New Product SEO Ready — "${fullProduct.title}"`, buildApprovalEmail(results, "webhook"));
+  } catch(e) { console.error("Webhook error:", e.message); }
+});
 
-// ─── Prioritise ───────────────────────────────────────────────────────────────
-async function runPrioritiser() {
-  if(!isConnected||products.length===0){alert("Products not loaded.");return;}
-  const btn=document.getElementById("priorityBtn"); btn.disabled=true; btn.textContent="Analysing…";
-  document.getElementById("priorityResults").innerHTML=`<div style="text-align:center;padding:40px;color:var(--muted)"><span class="spinner"></span><div style="margin-top:12px">Scoring ${products.length} products…</div></div>`;
-  if(Object.keys(rankDataCache).length===0) await loadRankData();
-  const scored=products.map(p=>scoreProduct(p)).sort((a,b)=>b.priorityScore-a.priorityScore);
-  renderPriorityTable(scored);
-  btn.disabled=false; btn.textContent="↻ Refresh List";
-}
-
-function scoreProduct(product) {
-  const id=String(product.id),re=rankDataCache[id]||{},ke=keywordsCache[id]||{};
-  const history=re.history||[],latest=history[history.length-1]||{},posIN=latest.posIN||null;
-  const isSvc=isServiceProduct(product);
-
-  let rankScore=0,rankBadge="";
-  if(!posIN){rankScore=30;rankBadge=`<span style="color:var(--muted);font-size:11px">Not ranked</span>`;}
-  else if(posIN<=3){rankScore=5;rankBadge=`<span class="pos-badge pos-1-3">#${posIN}</span>`;}
-  else if(posIN<=10){rankScore=10;rankBadge=`<span class="pos-badge pos-4-10">#${posIN}</span>`;}
-  else if(posIN<=20){rankScore=40;rankBadge=`<span class="pos-badge pos-11-30">#${posIN}</span>`;}
-  else if(posIN<=30){rankScore=35;rankBadge=`<span class="pos-badge pos-11-30">#${posIN}</span>`;}
-  else{rankScore=25;rankBadge=`<span class="pos-badge pos-31-100">#${posIN}</span>`;}
-
-  const wordCount=(product.body_html||"").replace(/<[^>]+>/g,"").split(/\s+/).filter(Boolean).length;
-  const hasH2H3=/<h[23]/i.test(product.body_html||"");
-  const isKar=isKarungaliProduct(product);
-  const isSph=!isSvc&&!isKar&&isSphatikProduct(product);
-  const isTul=!isSvc&&!isKar&&!isSph&&isTulsiProduct(product);
-  const hasAuth=isSvc?/mvs|vedapadasala|vadhyar/i.test(product.body_html||"")
-    :isKar?/karungali|ebony|diospyros/i.test(product.body_html||"")
-    :isSph?/sphatik|crystal|quartz|hardness|refractive/i.test(product.body_html||"")
-    :isTul?/tulsi|tulasi|ocimum|vaishnav/i.test(product.body_html||"")
-    :/rkrtl|x-ray|certified/i.test(product.body_html||"");
-  const hasMetaTitle=!!(product.metafields_global_title_tag);
-  const hasMetaDesc=!!(product.metafields_global_description_tag);
-
-  let contentScore=0;
-  if(wordCount<100)contentScore+=30; else if(wordCount<250)contentScore+=20; else if(wordCount<400)contentScore+=10; else contentScore+=3;
-  if(!hasH2H3)contentScore+=5; if(!hasAuth)contentScore+=5; if(!hasMetaTitle)contentScore+=5; if(!hasMetaDesc)contentScore+=5;
-  contentScore=Math.min(contentScore,30);
-
-  const alreadyOptimised=hasAuth&&wordCount>=400&&hasH2H3&&hasMetaTitle;
-  const notTracked=!ke.productId;
-  const priorityScore=rankScore+contentScore+(notTracked?10:0);
-
-  let tier="",tierColor="",tierBg="";
-  if(alreadyOptimised){tier="✅ Done";tierColor="var(--muted)";tierBg="var(--surface2)";}
-  else if(priorityScore>=60){tier="🔴 Do Now";tierColor="var(--red)";tierBg="#2A0A0A";}
-  else if(priorityScore>=40){tier="🟠 This Week";tierColor="var(--orange)";tierBg="#2A1A00";}
-  else{tier="🟢 Next Week";tierColor="var(--green)";tierBg="#0A1A0A";}
-
-  const reasons=[];
-  if(posIN>=11&&posIN<=30)reasons.push(`Ranking #${posIN} — one good push to page 1`);
-  if(!posIN)reasons.push("Not ranked — fresh SEO will establish baseline");
-  if(wordCount<100)reasons.push("Bare description — thin content penalty risk");
-  else if(wordCount<250)reasons.push(`Short description (${wordCount} words)`);
-  if(!hasAuth)reasons.push(isSvc?"No MVS Vedapadasala credentials":isKar?"No Karungali/Ebony wood authentication content":isSph?"No Sphatik authentication (refractive index/hardness) content":isTul?"No Tulsi sourcing/tradition content":"No RKRTL certification language");
-  if(!hasMetaTitle)reasons.push("Missing meta title");
-  if(!hasMetaDesc)reasons.push("Missing meta description");
-  if(notTracked)reasons.push("Not yet in rank tracker");
-  if(alreadyOptimised)reasons.push("Rich content + credentials + meta tags present");
-
-  return { id, title:product.title, posIN, rankBadge, wordCount, priorityScore, tier, tierColor, tierBg, alreadyOptimised, reason:reasons.slice(0,2).join(" · ")||"Standard priority", handle:product.handle||"", isService:isSvc };
+async function registerWebhooks() {
+  if (!storedAccessToken) return;
+  try {
+    const webhookUrl = `${APP_URL}/webhooks/products/create`;
+    const listRes    = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/webhooks.json`, { headers:{"X-Shopify-Access-Token":storedAccessToken} });
+    const listData   = await listRes.json();
+    if ((listData.webhooks||[]).find(w => w.address===webhookUrl)) { console.log("✅ Webhook already registered"); return; }
+    const createRes  = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/webhooks.json`, { method:"POST", headers:{"X-Shopify-Access-Token":storedAccessToken,"Content-Type":"application/json"}, body:JSON.stringify({ webhook:{ topic:"products/create", address:webhookUrl, format:"json" } }) });
+    const createData = await createRes.json();
+    console.log(createData.webhook ? `✅ Webhook registered` : `⚠️  Webhook issue: ${JSON.stringify(createData)}`);
+  } catch(e) { console.error("Webhook registration failed:", e.message); }
 }
 
-function renderPriorityTable(scored) {
-  const hot=scored.filter(p=>p.tier==="🔴 Do Now").length,warm=scored.filter(p=>p.tier==="🟠 This Week").length;
-  const cool=scored.filter(p=>p.tier==="🟢 Next Week").length,done=scored.filter(p=>p.alreadyOptimised).length;
-  document.getElementById("priorityStats").style.display="block";
-  document.getElementById("pStatHot").textContent=hot; document.getElementById("pStatWarm").textContent=warm;
-  document.getElementById("pStatCool").textContent=cool; document.getElementById("pStatDone").textContent=done;
-  document.getElementById("priorityResults").innerHTML=`
-    <div class="flex" style="gap:8px;margin-bottom:16px;flex-wrap:wrap">
-      <button class="btn btn-secondary btn-sm" onclick="filterPriority('all',this)" style="border-color:var(--gold);color:var(--gold)">All (${scored.length})</button>
-      <button class="btn btn-secondary btn-sm" onclick="filterPriority('now',this)">🔴 Do Now (${hot})</button>
-      <button class="btn btn-secondary btn-sm" onclick="filterPriority('week',this)">🟠 This Week (${warm})</button>
-      <button class="btn btn-secondary btn-sm" onclick="filterPriority('next',this)">🟢 Next Week (${cool})</button>
-      <button class="btn btn-secondary btn-sm" onclick="filterPriority('done',this)">✅ Done (${done})</button>
-    </div>
-    <div class="card" style="padding:0;overflow:hidden">
-      <table class="rank-table">
-        <thead><tr><th>#</th><th>PRODUCT</th><th>CURRENT RANK</th><th>CONTENT</th><th>PRIORITY</th><th>WHY</th><th>ACTION</th></tr></thead>
-        <tbody id="priorityTableBody">${scored.map((p,i)=>priorityRow(p,i+1)).join("")}</tbody>
-      </table>
+app.post("/cron/trigger", async (req, res) => {
+  if (req.query.secret !== SHOPIFY_CLIENT_SECRET) return res.status(403).json({ error: "Forbidden" });
+  res.json({ message: "Manual cron triggered — email arriving shortly." });
+  setTimeout(async () => {
+    try {
+      const fetchRes = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products.json?limit=250&fields=id,title,body_html,tags,handle,status,metafields_global_title_tag,metafields_global_description_tag`, { headers:{"X-Shopify-Access-Token":storedAccessToken} });
+      const data     = await fetchRes.json();
+      const products = (data.products||[]).filter(p => p.status==="active");
+      const results  = [];
+      for (const product of products) {
+        try {
+          const r = await runSEOPipeline(product);
+          results.push({ productId:product.id, productTitle:product.title, scoreBefore:r.scoreBefore, scoreAfter:r.scoreAfter, faqs:r.faqs, payload:{ body_html:r.description, metafields_global_title_tag:r.metaTitle, metafields_global_description_tag:r.metaDesc, tags:r.tags } });
+          await new Promise(r => setTimeout(r, 3000));
+        } catch(e) { console.error(`Manual cron failed for ${product.title}:`, e.message); }
+      }
+      if (results.length > 0) await sendEmail(`🔱 RudraKailash SEO Manual Report — ${results.length} products`, buildApprovalEmail(results, "manual"));
+    } catch(e) { console.error("Manual cron error:", e.message); }
+  }, 100);
+});
+
+app.post("/citations/check-all", async (req, res) => {
+  if (req.query.secret !== SHOPIFY_CLIENT_SECRET) return res.status(403).json({ error: "Forbidden" });
+  const queries = loadCitationQueries();
+  const entries = Object.values(queries);
+  if (entries.length === 0) return res.json({ message: "No citation queries tracked yet. Add some via POST /citations/queries first." });
+  res.json({ message: `Citation check started for ${entries.length} queries — check /citations/dashboard in a minute or two.` });
+  setTimeout(async () => {
+    for (const entry of entries) { await checkAndStoreCitation(entry); await new Promise(r => setTimeout(r, 3000)); }
+    console.log("🔎 Manual citation check-all complete.");
+  }, 100);
+});
+
+app.get("/citations/dashboard", (req, res) => {
+  const citationData = loadCitationData();
+  const rows = Object.values(citationData).sort((a, b) => (a.label || "").localeCompare(b.label || ""));
+  const cards = rows.map(e => {
+    const latest = e.history[e.history.length - 1] || {};
+    const historyStrip = e.history.slice(-12).map(h => `<span title="${h.date}" style="display:inline-block;width:14px;height:14px;margin-right:2px;border-radius:3px;background:${h.mentioned ? '#7FD48A' : '#F08080'}"></span>`).join("");
+    return `<div style="background:#1A0A00;border:1px solid #2E1500;border-radius:10px;padding:18px 20px;margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <div style="color:#F5E6C8;font-size:15px;font-weight:bold">${e.label}</div>
+        <div style="color:${latest.mentioned ? '#7FD48A' : '#F08080'};font-weight:bold;font-size:13px">${latest.mentioned === undefined ? '— not checked yet' : (latest.mentioned ? '✅ Cited' : '❌ Not cited')}</div>
+      </div>
+      <div style="color:#9A7050;font-size:12px;margin:6px 0">"${e.query}"</div>
+      <div style="margin:8px 0">${historyStrip}<span style="color:#5A3020;font-size:10px;margin-left:6px">last ${e.history.length} checks</span></div>
+      ${latest.otherDomains && latest.otherDomains.length ? `<div style="color:#80C0F0;font-size:11px">Also cited: ${latest.otherDomains.join(", ")}</div>` : ""}
     </div>`;
-}
+  }).join("") || `<div style="color:#9A7050;text-align:center;padding:40px">No citation checks run yet. POST a query to /citations/queries, then POST /citations/check/:id — or trigger all via POST /citations/check-all?secret=...</div>`;
+  res.send(`<!DOCTYPE html><html><body style="margin:0;padding:0;background:#0D0500;font-family:Georgia,serif"><div style="max-width:760px;margin:0 auto;padding:32px 20px"><div style="text-align:center;margin-bottom:28px"><div style="font-size:36px">ॐ</div><h1 style="color:#F0C84A;font-size:22px;margin:8px 0">LLM Citation Tracker</h1><p style="color:#9A7050;font-size:13px">Checked weekly · Monday 7:30am IST</p></div>${cards}</div></body></html>`);
+});
 
-function priorityRow(p, rank) {
-  const wordBadge=p.wordCount<100?`<span style="color:var(--red);font-size:11px">⚠ ${p.wordCount}w</span>`:p.wordCount<250?`<span style="color:var(--orange);font-size:11px">${p.wordCount}w</span>`:`<span style="color:var(--green);font-size:11px">✓ ${p.wordCount}w</span>`;
-  const svcTag=p.isService?` <span style="font-size:9px;background:#0A1A2A;color:var(--blue);border:1px solid #1A4A6A;padding:1px 5px;border-radius:4px">svc</span>`:"";
-  return `<tr data-tier="${p.tier}">
-    <td style="color:var(--muted);font-size:12px">${rank}</td>
-    <td style="color:var(--cream);font-size:12px;max-width:200px"><a href="https://rudrakailash.com/products/${p.handle}" target="_blank" style="color:var(--cream);text-decoration:none">${p.title}</a>${svcTag}</td>
-    <td style="text-align:center">${p.rankBadge}</td>
-    <td style="text-align:center">${wordBadge}</td>
-    <td style="text-align:center"><span style="font-size:11px;padding:3px 10px;border-radius:8px;background:${p.tierBg};color:${p.tierColor};border:1px solid ${p.tierColor}40">${p.tier}</span></td>
-    <td style="color:var(--muted);font-size:11px;max-width:220px">${p.reason}</td>
-    <td><button class="btn btn-secondary btn-sm" onclick="jumpToProduct('${p.id}')" ${p.alreadyOptimised?'style="opacity:.5"':''}>${p.alreadyOptimised?"Re-run":"▶ Optimise"}</button></td>
-  </tr>`;
-}
-
-function filterPriority(filter, btn) {
-  document.querySelectorAll("#priorityResults .btn").forEach(b=>{b.style.borderColor="";b.style.color="";});
-  btn.style.borderColor="var(--gold)"; btn.style.color="var(--gold)";
-  document.querySelectorAll("#priorityTableBody tr").forEach(row=>{
-    const tier=row.getAttribute("data-tier")||"";
-    row.style.display=(filter==="all"||
-      (filter==="now"&&tier==="🔴 Do Now")||(filter==="week"&&tier==="🟠 This Week")||
-      (filter==="next"&&tier==="🟢 Next Week")||(filter==="done"&&tier==="✅ Done"))?"":"none";
-  });
-}
-
-function jumpToProduct(productId) {
-  switchTab("seo");
-  const sel=document.getElementById("productSelect");
-  if(sel){sel.value=productId;onProductChange();window.scrollTo({top:0,behavior:"smooth"});}
-}
-
-function connectShopify() { window.location.href=PROXY_URL+"/auth/install"; }
-
-</script>
-</body>
-</html>
+app.listen(PORT, async () => {
+  console.log(`🚀 RudraKailash SEO Proxy v8 running on port ${PORT}`);
+  console.log(`   Store:         ${SHOPIFY_STORE_DOMAIN}`);
+  console.log(`   Token:         ${storedAccessToken ? "✅ Loaded (" + (fs.existsSync(TOKEN_FILE) ? "disk" : "env") + ")" : "⚠️  Not yet"}`);
+  console.log(`   Anthropic:     ${process.env.ANTHROPIC_API_KEY ? "✅" : "❌ NOT SET"}`);
+  console.log(`   Serper:        ${process.env.SERPER_API_KEY    ? "✅" : "❌ NOT SET"}`);
+  console.log(`   Email:         ${process.env.EMAIL_SMTP_USER   ? "✅ " + process.env.EMAIL_SMTP_USER : "❌ NOT SET"}`);
+  console.log(`   SEO Tool:      ✅ Served at /seo`);
+  console.log(`   Rank Tracking: ✅ Daily 6am IST · Weekly report Monday 7am IST · Storage: ${DB_CONFIGURED ? "MySQL (Hostinger)" : "local JSON"}`);
+  console.log(`   Citations:     ✅ Weekly Monday 7:30am IST · Dashboard at /citations/dashboard`);
+  console.log(`   SEO Cron:      ✅ Sunday 11pm IST`);
+  console.log(`   Audit Module:  ${auditModule ? "✅ Loaded" : "⚠️  Not loaded"}`);
+  if (DB_CONFIGURED) await ensureRankSchema();
+  if (storedAccessToken) await registerWebhooks();
+});
