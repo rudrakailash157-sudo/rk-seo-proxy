@@ -635,6 +635,39 @@ function isMalaProduct(title) {
   return /\bmala\b/i.test(title || "");
 }
 
+// ─── Product-form keyword filter (mirrors server.js) ───────────────────────
+// Competitor research pulls from whatever ranks for a given search query —
+// and competitor pages for single beads, malas, and bracelets all mix
+// together in those results. Without filtering, a phrase like "14 Benefits of
+// 7 Mukhi Rudraksha Mala" (pulled from a competitor's MALA page) can surface
+// as an H1 keyword suggestion for a SINGLE-BEAD product, and the writer is
+// then instructed to work it into the <h2> — pushing "Mala" language into a
+// page that isn't a mala. This deterministically drops any extracted keyword
+// that names a product form (mala/bracelet) different from the current
+// product's own form, before the keyword brief is built or shown in the UI.
+// Form-neutral keywords (no mala/bracelet mention at all) are always kept.
+function getProductForm(title) {
+  const t = (title || "").toLowerCase();
+  if (/\bmala\b/.test(t)) return "mala";
+  if (/\bbracelet\b/.test(t)) return "bracelet";
+  return "single";
+}
+
+function filterKeywordsByProductForm(keywords, productTitle) {
+  const currentForm = getProductForm(productTitle);
+  const formRe = /\b(mala|malas|bracelet|bracelets)\b/i;
+  const filterList = (list) => (list || []).filter(kw => {
+    if (!formRe.test(kw)) return true;
+    const kwForm = /\b(mala|malas)\b/i.test(kw) ? "mala" : "bracelet";
+    if (kwForm !== currentForm) {
+      console.warn(`⚠️  Dropped form-mismatched keyword "${kw}" (${kwForm}) for "${productTitle}" (${currentForm})`);
+      return false;
+    }
+    return true;
+  });
+  return { h1: filterList(keywords.h1), h2h3: filterList(keywords.h2h3), phrases: filterList(keywords.phrases) };
+}
+
 // ─── Origin resolution ─────────────────────────────────────────────────────────
 function resolveOrigin(title, isMala) {
   const t = (title || "").toLowerCase();
@@ -1316,6 +1349,7 @@ async function runAllAgents() {
         console.warn("Keyword JSON parse failed:", e.message, "— raw response (first 300 chars):", kwRaw.slice(0, 300));
       }
     }
+    extractedKeywords = filterKeywordsByProductForm(extractedKeywords, selectedProduct.title);
     renderKeywords(extractedKeywords);
     const totalKw = (extractedKeywords.h1||[]).length + (extractedKeywords.h2h3||[]).length + (extractedKeywords.phrases||[]).length;
     setAgent("keywords", "done", totalKw > 0 ? `✓ ${totalKw} keywords` : "✓ No keywords");
