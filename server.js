@@ -1628,6 +1628,54 @@ function extractJsonValue(text) {
   return stripped.slice(start, end + 1);
 }
 
+// ─── JSON repair helpers ────────────────────────────────────────────────────
+// The most common reason JSON.parse fails on an otherwise-correct-looking LLM
+// response is a literal, unescaped line break (or tab) inside a string value
+// — the model writes text as if it were prose, forgetting that within a JSON
+// string a newline must be encoded as \n, not an actual line break. This is
+// invisible when eyeballing the raw text (it just looks like a paragraph
+// break) but throws "Bad control character in string literal" on parse. This
+// walks the text tracking whether it's inside a quoted string (respecting
+// escape sequences) and only touches control characters found there, so
+// structural JSON whitespace between tokens is left completely alone.
+function sanitizeJsonControlChars(text) {
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) { out += ch; escaped = false; continue; }
+      if (ch === "\\") { out += ch; escaped = true; continue; }
+      if (ch === '"') { inString = false; out += ch; continue; }
+      if (ch === "\n") { out += "\\n"; continue; }
+      if (ch === "\r") { continue; }
+      if (ch === "\t") { out += "\\t"; continue; }
+      out += ch;
+    } else {
+      if (ch === '"') { inString = true; out += ch; continue; }
+      out += ch;
+    }
+  }
+  return out;
+}
+
+// Second common failure mode: a trailing comma before a closing ] or } —
+// valid-looking JSON that most LLMs occasionally produce, but strict
+// JSON.parse rejects it outright.
+function stripTrailingCommas(text) {
+  return text.replace(/,(\s*[\]}])/g, "$1");
+}
+
+// Combines extractJsonValue + both repairs + JSON.parse into one call, so
+// every JSON-producing call site in the pipeline (keywords, gaps, FAQ) gets
+// the same resilience without repeating this logic at each site.
+function parseJsonSafe(rawText) {
+  const extracted = extractJsonValue(rawText);
+  const repaired  = stripTrailingCommas(sanitizeJsonControlChars(extracted));
+  return JSON.parse(repaired);
+}
+
 async function callClaude(system, user, max_tokens = 1200) {
   const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
   const response = await fetch("https://api.anthropic.com/v1/messages", {
@@ -1708,7 +1756,7 @@ async function runSEOPipeline(product) {
         `Extract SEO keywords from these ${competitors.length} competitor pages for "${product.title}" on RudraKailash.com.\n\n${compHeadingInput}\n\nExtract:\n1. h1Keywords: Primary keywords from competitor H1 tags (max 8, exact phrases)\n2. h2h3Keywords: Sub-topic LSI keywords from H2/H3 headings (max 12, exact phrases)\n3. intentPhrases: Recurring long-tail intent phrases from body text across 2+ competitors (max 10)\n\nOutput ONLY:\n{"h1":["phrase1"],"h2h3":["phrase1"],"phrases":["phrase1"]}`, 1500
       );
       try {
-        const kw = JSON.parse(extractJsonValue(kwRaw));
+        const kw = parseJsonSafe(kwRaw);
         extractedKeywords = { h1: kw.h1||[], h2h3: kw.h2h3||[], phrases: kw.phrases||[] };
         const h1List = extractedKeywords.h1.slice(0,5).join(" / ");
         const h2h3List = extractedKeywords.h2h3.slice(0,8).join(", ");
@@ -1728,7 +1776,7 @@ async function runSEOPipeline(product) {
       const compTexts = competitors.map((c,i) => `Competitor ${i+1} (${c.url}):\n${(c.content||c.snippet).slice(0,500)}`).join("\n\n---\n\n");
       const gapRaw = await callClaude(`SEO strategist. Output ONLY JSON array of gap strings.`, `Product: "${product.title}". Our: "${descPlain}". Competitors:\n${compTexts}\nIdentify 5-8 gaps. Output ONLY JSON array.`, 700);
       try {
-        const gaps = JSON.parse(extractJsonValue(gapRaw));
+        const gaps = parseJsonSafe(gapRaw);
         gapSummary = `Fill: ${gaps.join("; ")}`;
       } catch(e) { console.warn("Gap analysis JSON parse failed:", e.message, "— falling back to raw text"); gapSummary = gapRaw.slice(0,300); }
     } catch(e) { console.warn("Gap analysis failed:", e.message); }
@@ -1833,18 +1881,37 @@ DEPTH RULE (mandatory, applies specifically to "Traditional Benefits" and "Who S
     ? `Generate 6 voice-search FAQ pairs for "${product.title}" on RudraKailash.com.\n\nRules:\n- Natural spoken language questions\n- Answers 80-150 words, fully self-contained\n- Include: what Tulsi (Holy Basil / Ocimum tenuiflorum) mala is, Vaishnava significance, who should wear it, care instructions\n- CRITICAL: no authentication/testing/certification method is established for this product — do NOT include a question about authenticity verification, and do NOT reference RKRTL, "certified," or "verified" anywhere\n- NEVER X-ray, NEVER Elaeocarpus ganitrus, NEVER mukhi language — this is a different plant genus entirely, not Rudraksha\n\nOutput ONLY JSON: [{"q":"Question?","a":"Answer, 80-150 words."},...] 6 items.`
     : `Generate 6 voice-search FAQ pairs for "${product.title}" Rudraksha bead on RudraKailash.com.\n\n${originBlock}\n${mukhiFactsBlock}\n${anchorContentBlock}\nRules:\n- Natural spoken language questions\n- Answers 80-150 words, fully self-contained so each one stands alone as a citable passage — no dangling references to "as mentioned above"\n- Include: what it is, who should wear it, how to wear it, RKRTL authentication process, botanical species (per the SPECIES block above), buying advice\n- If VERIFIED ANCHOR FAQ content is supplied above, ALL of those FAQs MUST be included among the 6 pairs (verbatim or lightly reworded, meaning unchanged) — expand beyond 6 pairs if needed to fit every supplied anchor FAQ, rather than omitting any or inventing a substitute\n- If any answer touches origin, it MUST use the exact origin from the VERIFIED ORIGIN block above — do not default to Nepal or invent an alternate origin if a different one is stated there, and never state two different origins across different answers\n- If any answer touches botanical species, it MUST use the exact species from the SPECIES block above — do not default to Elaeocarpus ganitrus if a different species is stated there\n- If any answer touches deity, planet, chakra, or mantra, it MUST match the VERIFIED MUKHI FACTS above exactly — do not substitute or invent an alternative\n- Use "seekers report" framing for belief/tradition claims only — VERIFIED ANCHOR CONTENT claims are factual/operational and should stay direct, not hedged\n- If RKRTL is mentioned, expand it on first use exactly as "RKRTL (Kailasha Rudraksha Testing Laboratory)" — never any other expansion\n- NEVER state a specific bead size in mm or weight in grams in any answer\n\nOutput ONLY JSON: [{"q":"Question?","a":"Answer, 80-150 words."},...] 6 items.`;
 
+  // Strict JSON-validity instructions, on top of the schema itself, since the
+  // single most common cause of FAQ generation silently ending up empty is
+  // the model embedding a literal (unescaped) line break inside an answer
+  // string — invisible on a glance but fatal to JSON.parse. parseJsonSafe()
+  // repairs this automatically, but asking for it explicitly reduces how
+  // often the repair is even needed.
+  const faqSystemPrompt = `Voice search SEO expert. Output ONLY valid JSON array. No markdown, no code fences, no commentary before or after the JSON. The JSON must be strictly valid: escape every double quote inside string values as \\", and escape every line break inside string values as \\n — never include a literal newline character inside a string value. Output the JSON as compact text on a single line.`;
+
   const [description, metaTitle, metaDesc, tags, faq] = await Promise.allSettled([
     callClaude(descSystem, descUser, 6000),
     callClaude(`SEO specialist. Output ONLY the meta title text. No quotes. No explanation.`, metaTitleUser),
     callClaude(`SEO specialist. Output ONLY the meta description text. No quotes. No explanation.`, metaDescUser),
     callClaude(`Shopify SEO expert. Output ONLY comma-separated tags. No explanation.`, tagsUser),
-    callClaude(`Voice search SEO expert. Output ONLY valid JSON array. No markdown.`, faqUser, 2200),
+    callClaude(faqSystemPrompt, faqUser, 3000),
   ]);
 
   let faqs = [];
   if (faq.status === "fulfilled") {
-    try { faqs = JSON.parse(extractJsonValue(faq.value)); }
-    catch (e) { console.warn("FAQ JSON parse failed:", e.message, "— raw response (first 300 chars):", faq.value.slice(0, 300)); faqs = []; }
+    try {
+      faqs = parseJsonSafe(faq.value);
+    } catch (e) {
+      console.warn(`FAQ JSON parse failed for "${product.title}" on first attempt:`, e.message, "— retrying once. Raw response (first 300 chars):", faq.value.slice(0, 300));
+      try {
+        const retryText = await callClaude(faqSystemPrompt, faqUser, 3000);
+        faqs = parseJsonSafe(retryText);
+        console.log(`✅ FAQ parse succeeded on retry for "${product.title}"`);
+      } catch (e2) {
+        console.warn(`FAQ JSON parse failed on retry too for "${product.title}" — leaving FAQs empty for this product:`, e2.message);
+        faqs = [];
+      }
+    }
   }
 
   const result = {
