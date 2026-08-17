@@ -254,7 +254,7 @@
         <span id="sphatikBadge" class="service-badge hidden" style="background:#0A1A2A;color:#80C0F0;border-color:#1A4A6A;">💎 Sphatik Crystal</span>
         <span id="tulsiBadge" class="service-badge hidden" style="background:#0A1A0A;color:#A0D080;border-color:#2A5A2A;">🌿 Tulsi (no auth. method)</span>
         <span id="originBadge" class="service-badge hidden" style="background:#1A0A2A;color:#D090F0;border-color:#4A2A6A;"></span>
-        <button class="btn btn-primary" onclick="runAllAgents()" id="runBtn" disabled>▶ Run AI SEO Agents</button>
+        <button class="btn btn-primary" onclick="runKeywordResearch()" id="researchBtn" disabled>▶ 1. Extract Keywords</button>
       </div>
       <div class="flex mt-8" style="gap:8px;flex-wrap:wrap">
         <button class="btn btn-secondary btn-sm" onclick="previewQuickSpecs()" id="previewSpecsBtn" disabled>📋 Preview Quick Specs + Pricing</button>
@@ -289,12 +289,6 @@
       <div id="customBlocksList" class="mt-16"></div>
     </div>
 
-    <div class="card">
-      <div class="card-title">🔑 Additional Target Keywords <span style="text-transform:none;letter-spacing:0;font-size:11px">— from your own keyword research, merged with competitor-extracted keywords</span></div>
-      <div class="text-muted" style="font-size:12px;margin-bottom:14px">Paste keywords your own research turned up that the competitor extraction below might be missing — one per line, or comma-separated. These are treated with equal priority to the extracted H1 keywords when the description is written. Re-enter for each product; this box clears on product change.</div>
-      <textarea id="manualKeywords" class="content-box editable" rows="3" placeholder="e.g. rudraksha for anxiety and stress&#10;7 mukhi rudraksha price india&#10;saturn rudraksha remedy"></textarea>
-    </div>
-
     <div class="card hidden" id="compSection">
       <div class="flex-between">
         <div class="card-title" style="margin:0">🔍 Competitor Research — Top Ranking Pages</div>
@@ -315,6 +309,15 @@
       <div id="gapSection" class="hidden mt-8">
         <div class="card-title" style="margin-bottom:8px">Content Gaps Identified</div>
         <div id="gapTags"></div>
+      </div>
+    </div>
+
+    <div class="card hidden" id="generateSection">
+      <div class="card-title">🔑 Additional Target Keywords <span style="text-transform:none;letter-spacing:0;font-size:11px">— review the extracted keywords above, then add anything missing before generating</span></div>
+      <div class="text-muted" style="font-size:12px;margin-bottom:14px">Paste keywords your own research turned up that the competitor extraction above is missing — one per line, or comma-separated. These get equal priority to the extracted H1 keywords when the description is written. Leave blank to generate from the extracted keywords alone.</div>
+      <textarea id="manualKeywords" class="content-box editable" rows="3" placeholder="e.g. rudraksha for anxiety and stress&#10;7 mukhi rudraksha price india&#10;saturn rudraksha remedy"></textarea>
+      <div class="flex mt-16" style="justify-content:flex-end">
+        <button class="btn btn-primary" onclick="runContentGeneration()" id="generateBtn">✍️ 2. Generate Content →</button>
       </div>
     </div>
 
@@ -580,6 +583,13 @@ if (!PROXY_URL || PROXY_URL === "undefined" || PROXY_URL === "null") PROXY_URL =
 let products = [], selectedProduct = null, isConnected = false;
 let rankChart = null, rankDataCache = {}, keywordsCache = {};
 let generatedFAQs = [];
+// Holds the output of runKeywordResearch() (competitors, extracted keywords,
+// content gaps, the pre-generation SEO score) so runContentGeneration() can
+// use it after the user has had a chance to review the extracted keywords
+// and add their own. Tagged with productId so a stale research result from
+// a previously-selected product can never silently get used for a different
+// one — resetUI() (called on every product change) clears this to null.
+let researchState = null;
 
 // ─── Service product detection ────────────────────────────────────────────────
 function isServiceProduct(product) {
@@ -1185,7 +1195,7 @@ async function loadProducts() {
 function onProductChange() {
   const id = document.getElementById("productSelect").value;
   selectedProduct = products.find(p => String(p.id) === id) || null;
-  document.getElementById("runBtn").disabled = !selectedProduct;
+  document.getElementById("researchBtn").disabled = !selectedProduct;
   resetUI();
 
   const badge   = document.getElementById("thinBadge");
@@ -1276,13 +1286,20 @@ function setAgent(id, state, msg) {
 function resetAgents() { ["research","keywords","gaps","desc","title","metadesc","tags","faq","schema"].forEach(id => setAgent(id, "", "Waiting…")); }
 
 // ─── Main pipeline ────────────────────────────────────────────────────────────
-async function runAllAgents() {
+// ─── Step 1: Keyword research (competitor research + keyword extraction + gap analysis) ─
+// Stops here deliberately — does NOT read manual keywords or generate any
+// content. That happens in runContentGeneration() below, once the store
+// owner has had a chance to actually look at what got extracted and decide
+// what (if anything) their own keyword research adds that's missing.
+async function runKeywordResearch() {
   if (!selectedProduct) return;
-  const runBtn = document.getElementById("runBtn");
-  runBtn.disabled = true; runBtn.textContent = "Running…";
+  const researchBtn = document.getElementById("researchBtn");
+  researchBtn.disabled = true; researchBtn.textContent = "Researching…";
   resetAgents();
+  researchState = null;
   document.getElementById("scoreSection").classList.remove("hidden");
   document.getElementById("compSection").classList.remove("hidden");
+  document.getElementById("generateSection").classList.add("hidden");
   document.getElementById("resultsSection").classList.add("hidden");
   document.getElementById("compList").innerHTML = "";
   document.getElementById("gapSection").classList.add("hidden");
@@ -1294,18 +1311,7 @@ async function runAllAgents() {
   const isKarungali = !isService && isKarungaliProduct(selectedProduct);
   const isSphatik   = !isService && !isKarungali && isSphatikProduct(selectedProduct);
   const isTulsi     = !isService && !isKarungali && !isSphatik && isTulsiProduct(selectedProduct);
-  const isBead      = !isService && !isKarungali && !isSphatik && !isTulsi;
   console.log(`Product type: ${isService ? "🛕 SERVICE" : isKarungali ? "🪵 KARUNGALI" : isSphatik ? "💎 SPHATIK" : isTulsi ? "🌿 TULSI" : "📿 BEAD/PRODUCT"}`);
-
-  document.getElementById("eeAtBadge").textContent = isService
-    ? "✦ MVS Vedapadasala · Ghana Parayana · Kanchi Mutt VRNT · Feb 2026 Google E-E-A-T compliant"
-    : isKarungali
-    ? "✦ Karungali (Diospyros ebenum) · Authentic Ebony Wood · Tamil Nadu Heritage · Shaiva Siddhanta Tradition"
-    : isSphatik
-    ? "✦ Sphatik (natural rock crystal) · Refractive Index / Mohs Hardness Verified · Vedic Purity Tradition"
-    : isTulsi
-    ? "✦ Tulsi (Ocimum tenuiflorum) · Vaishnava Devotional Tradition · No authentication method claimed"
-    : "✦ Intent-based E-E-A-T expression · GMC-safe · No deity names in titles/headings · Feb 2026 Google update compliant";
 
   const before = scoreSEO(selectedProduct.metafields_global_title_tag, selectedProduct.metafields_global_description_tag, selectedProduct.tags, selectedProduct.body_html, isService, isKarungali, isSphatik, isTulsi);
   showScore("scoreBefore", before);
@@ -1326,7 +1332,6 @@ async function runAllAgents() {
     // Agent 2: Keyword extraction
     setAgent("keywords", "running", "Extracting keywords…");
     let extractedKeywords = { h1: [], h2h3: [], phrases: [] };
-    let keywordBrief = "";
     if (competitors.length > 0) {
       const compHeadingInput = competitors.map((c, i) => {
         const headings = c.headings || {};
@@ -1361,24 +1366,6 @@ async function runAllAgents() {
     const totalKw = (extractedKeywords.h1||[]).length + (extractedKeywords.h2h3||[]).length + (extractedKeywords.phrases||[]).length;
     setAgent("keywords", "done", totalKw > 0 ? `✓ ${totalKw} keywords` : "✓ No keywords");
 
-    let manualKeywords = parseManualKeywords(document.getElementById("manualKeywords")?.value);
-    if (manualKeywords.length > 0) console.log(`🔑 ${manualKeywords.length} manual keyword(s) supplied by store owner, merging with extracted keywords`);
-    manualKeywords = dedupeManualKeywords(manualKeywords, extractedKeywords);
-
-    let keywordBriefParts = [];
-    if (totalKw > 0) {
-      const kw = extractedKeywords;
-      keywordBriefParts = [
-        (kw.h1||[]).length    ? `H1 PRIMARY KEYWORDS: ${(kw.h1||[]).slice(0,5).join(" / ")}` : "",
-        (kw.h2h3||[]).length  ? `H2/H3 SUB-TOPIC KEYWORDS: ${(kw.h2h3||[]).slice(0,8).join(", ")}` : "",
-        (kw.phrases||[]).length ? `LONG-TAIL INTENT PHRASES: ${(kw.phrases||[]).slice(0,8).join(", ")}` : "",
-      ].filter(Boolean);
-    }
-    if (manualKeywords.length > 0) {
-      keywordBriefParts.push(`STORE OWNER KEYWORDS (from Subbu's own keyword research — MANDATORY, treat with equal priority to the H1 PRIMARY KEYWORDS above): ${manualKeywords.join(", ")}`);
-    }
-    keywordBrief = keywordBriefParts.join("\n");
-
     // Agent 3: Gap analysis
     setAgent("gaps", "running", "Identifying gaps…");
     let gaps = [], gapSummary = "Cover all key topics comprehensively.";
@@ -1408,6 +1395,78 @@ async function runAllAgents() {
     renderGaps(gaps);
     setAgent("gaps", "done", gaps.length > 0 ? `✓ ${gaps.length} gaps` : "✓ No gaps");
 
+    researchState = { productId: selectedProduct.id, competitors, extractedKeywords, gaps, gapSummary, before };
+    document.getElementById("generateSection").classList.remove("hidden");
+    document.getElementById("generateSection").scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+  } catch (e) {
+    console.error("Keyword research error:", e);
+  }
+  researchBtn.disabled = false; researchBtn.textContent = "↻ Re-Extract Keywords";
+}
+
+// ─── Step 2: Content generation ─────────────────────────────────────────────
+// Runs only after runKeywordResearch() has completed for the CURRENTLY
+// selected product (checked via researchState.productId). Reads the manual
+// keywords box fresh, right now — i.e. after the store owner has actually
+// seen the extracted keywords above and had the chance to add anything
+// missing — dedupes against the extracted list, then proceeds with the full
+// description/meta/tags/FAQ/schema/SGE pipeline exactly as before.
+async function runContentGeneration() {
+  if (!selectedProduct) return;
+  if (!researchState || researchState.productId !== selectedProduct.id) {
+    alert("Please run \"1. Extract Keywords\" for this product first — content generation uses those results.");
+    return;
+  }
+  const generateBtn = document.getElementById("generateBtn");
+  generateBtn.disabled = true; generateBtn.textContent = "Generating…";
+  document.getElementById("resultsSection").classList.add("hidden");
+  generatedFAQs = [];
+
+  const isService   = isServiceProduct(selectedProduct);
+  const isKarungali = !isService && isKarungaliProduct(selectedProduct);
+  const isSphatik   = !isService && !isKarungali && isSphatikProduct(selectedProduct);
+  const isTulsi     = !isService && !isKarungali && !isSphatik && isTulsiProduct(selectedProduct);
+  const isBead      = !isService && !isKarungali && !isSphatik && !isTulsi;
+
+  document.getElementById("eeAtBadge").textContent = isService
+    ? "✦ MVS Vedapadasala · Ghana Parayana · Kanchi Mutt VRNT · Feb 2026 Google E-E-A-T compliant"
+    : isKarungali
+    ? "✦ Karungali (Diospyros ebenum) · Authentic Ebony Wood · Tamil Nadu Heritage · Shaiva Siddhanta Tradition"
+    : isSphatik
+    ? "✦ Sphatik (natural rock crystal) · Refractive Index / Mohs Hardness Verified · Vedic Purity Tradition"
+    : isTulsi
+    ? "✦ Tulsi (Ocimum tenuiflorum) · Vaishnava Devotional Tradition · No authentication method claimed"
+    : "✦ Intent-based E-E-A-T expression · GMC-safe · No deity names in titles/headings · Feb 2026 Google update compliant";
+
+  const { competitors, extractedKeywords, gaps, gapSummary, before } = researchState;
+  const totalKw = (extractedKeywords.h1||[]).length + (extractedKeywords.h2h3||[]).length + (extractedKeywords.phrases||[]).length;
+
+  let manualKeywords = parseManualKeywords(document.getElementById("manualKeywords")?.value);
+  if (manualKeywords.length > 0) console.log(`🔑 ${manualKeywords.length} manual keyword(s) supplied by store owner, merging with extracted keywords`);
+  manualKeywords = dedupeManualKeywords(manualKeywords, extractedKeywords);
+
+  let keywordBriefParts = [];
+  if (totalKw > 0) {
+    const kw = extractedKeywords;
+    keywordBriefParts = [
+      (kw.h1||[]).length    ? `H1 PRIMARY KEYWORDS: ${(kw.h1||[]).slice(0,5).join(" / ")}` : "",
+      (kw.h2h3||[]).length  ? `H2/H3 SUB-TOPIC KEYWORDS: ${(kw.h2h3||[]).slice(0,8).join(", ")}` : "",
+      (kw.phrases||[]).length ? `LONG-TAIL INTENT PHRASES: ${(kw.phrases||[]).slice(0,8).join(", ")}` : "",
+    ].filter(Boolean);
+  }
+  if (manualKeywords.length > 0) {
+    keywordBriefParts.push(`STORE OWNER KEYWORDS (from Subbu's own keyword research — MANDATORY, treat with equal priority to the H1 PRIMARY KEYWORDS above): ${manualKeywords.join(", ")}`);
+  }
+  const keywordBrief = keywordBriefParts.join("\n");
+
+  setAgent("desc",     "running", "Writing…");
+  setAgent("title",    "running", "Writing…");
+  setAgent("metadesc", "running", "Writing…");
+  setAgent("tags",     "running", "Writing…");
+  setAgent("faq",      "running", "Generating Q&As…");
+
+  try {
     const descPlain  = (selectedProduct.body_html||"").replace(/<[^>]+>/g,"").slice(0,400);
     const isMalaProd = isMalaProduct(selectedProduct.title);
     const origin = isBead ? resolveOrigin(selectedProduct.title, isMalaProd) : null;
@@ -1576,11 +1635,9 @@ DEPTH RULE (mandatory, applies specifically to "Traditional Benefits" and "Who S
     await runSGEAnalysis(newDesc, selectedProduct.title, isService);
     document.getElementById("resultsSection").classList.remove("hidden");
 
-  } catch (e) { console.error("Pipeline error:", e); }
-  runBtn.disabled = false; runBtn.textContent = "▶ Run AI SEO Agents";
+  } catch (e) { console.error("Content generation error:", e); }
+  generateBtn.disabled = false; generateBtn.textContent = "✍️ 2. Generate Content →";
 }
-
-// ─── AI call ──────────────────────────────────────────────────────────────────
 async function aiGenerate(system, user, max_tokens = 1200) {
   const res = await fetch(PROXY_URL + "/ai/generate", {
     method: "POST", headers: {"Content-Type":"application/json"},
@@ -1877,7 +1934,7 @@ async function pushToShopify() {
   } catch (e) { pushBtn.textContent = "❌ Failed — Retry"; pushBtn.disabled = false; }
 }
 
-function resetUI() { document.getElementById("scoreSection").classList.add("hidden"); document.getElementById("compSection").classList.add("hidden"); document.getElementById("resultsSection").classList.add("hidden"); resetAgents(); }
+function resetUI() { document.getElementById("scoreSection").classList.add("hidden"); document.getElementById("compSection").classList.add("hidden"); document.getElementById("generateSection").classList.add("hidden"); document.getElementById("resultsSection").classList.add("hidden"); resetAgents(); researchState = null; const genBtn = document.getElementById("generateBtn"); if (genBtn) { genBtn.disabled = false; genBtn.textContent = "✍️ 2. Generate Content →"; } }
 function copyToClipboard(elId) { const text=document.getElementById(elId).textContent; navigator.clipboard.writeText(text).then(()=>{ const btn=event.target,orig=btn.textContent; btn.textContent="✓ Copied!"; setTimeout(()=>btn.textContent=orig,2000); }); }
 function escHtml(str) { return (str||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
 
