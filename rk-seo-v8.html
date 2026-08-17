@@ -1311,7 +1311,7 @@ async function runAllAgents() {
         }
       }
       try {
-        extractedKeywords = JSON.parse(extractJsonValue(kwRaw));
+        extractedKeywords = parseJsonSafe(kwRaw);
       } catch(e) {
         console.warn("Keyword JSON parse failed:", e.message, "— raw response (first 300 chars):", kwRaw.slice(0, 300));
       }
@@ -1352,7 +1352,7 @@ async function runAllAgents() {
           gapRes = "";
         }
       }
-      try { gaps = JSON.parse(extractJsonValue(gapRes)); } catch(e) { console.warn("Gap analysis JSON parse failed:", e.message, "— raw response (first 300 chars):", gapRes.slice(0, 300)); }
+      try { gaps = parseJsonSafe(gapRes); } catch(e) { console.warn("Gap analysis JSON parse failed:", e.message, "— raw response (first 300 chars):", gapRes.slice(0, 300)); }
       gapSummary = gaps.length > 0 ? `Fill these gaps: ${gaps.join("; ")}` : gapSummary;
     }
     renderGaps(gaps);
@@ -1457,12 +1457,20 @@ DEPTH RULE (mandatory, applies specifically to "Traditional Benefits" and "Who S
       ? `Generate 6 voice-search FAQ pairs for "${selectedProduct.title}" on RudraKailash.com.\n\nRules:\n- Natural spoken language questions\n- Answers 80-150 words, fully self-contained so each one stands alone as a citable passage\n- Include: what Tulsi (Holy Basil / Ocimum tenuiflorum) mala is, Vaishnava significance, who should wear it, care instructions\n- CRITICAL: no authentication/testing/certification method is established for this product — do NOT include a question about authenticity verification, and do NOT reference RKRTL, "certified," or "verified" anywhere\n- NEVER X-ray, NEVER Elaeocarpus ganitrus, NEVER mukhi language — this is a different plant genus entirely, not Rudraksha\n\nOutput ONLY JSON: [{"q":"Question?","a":"Answer, 80-150 words."},...] 6 items.`
       : `Generate 6 voice-search FAQ pairs for "${selectedProduct.title}" Rudraksha bead on RudraKailash.com.\n\n${originBlock}\n${mukhiFactsBlock}\n${anchorContentBlock}\nRules:\n- Natural spoken language questions\n- Answers 80-150 words, fully self-contained so each one stands alone as a citable passage — no dangling references to "as mentioned above"\n- Include: what it is, who should wear it, how to wear it, RKRTL authentication process, botanical species (per the SPECIES block above), buying advice\n- If VERIFIED ANCHOR FAQ content is supplied above, ALL of those FAQs MUST be included among the 6 pairs (verbatim or lightly reworded, meaning unchanged) — expand beyond 6 pairs if needed to fit every supplied anchor FAQ, rather than omitting any or inventing a substitute\n- If any answer touches origin, it MUST use the exact origin from the VERIFIED ORIGIN block above — do not default to Nepal or invent an alternate origin if a different one is stated there, and never state two different origins across different answers\n- If any answer touches botanical species, it MUST use the exact species from the SPECIES block above — do not default to Elaeocarpus ganitrus if a different species is stated there, and never state two different species across different answers\n- If any answer touches deity, planet, chakra, or mantra, it MUST match the VERIFIED MUKHI FACTS above exactly — do not substitute or invent an alternative\n- Use "seekers report" framing for belief/tradition claims only — VERIFIED ANCHOR CONTENT claims are factual/operational and should stay direct, not hedged\n- If RKRTL is mentioned, expand it on first use exactly as "RKRTL (Kailasha Rudraksha Testing Laboratory)" — never any other expansion\n- Avoid leading with deity names in questions\n- NEVER state a specific bead size in mm or weight in grams in any answer — natural size ranges vary by mukhi count, origin, and current inventory batch, so an invented figure risks being factually wrong\n\nOutput ONLY JSON: [{"q":"Question?","a":"Answer, 80-150 words."},...] 6 items.`;
 
+    // Strict JSON-validity instructions, on top of the schema itself, since the
+    // single most common cause of FAQ generation silently ending up empty is
+    // the model embedding a literal (unescaped) line break inside an answer
+    // string — invisible on a glance but fatal to JSON.parse. parseJsonSafe()
+    // repairs this automatically, but asking for it explicitly reduces how
+    // often the repair is even needed.
+    const faqSystemPrompt = `Voice search SEO expert. Output ONLY valid JSON array. No markdown, no code fences, no commentary before or after the JSON. The JSON must be strictly valid: escape every double quote inside string values as \\", and escape every line break inside string values as \\n — never include a literal newline character inside a string value. Output the JSON as compact text on a single line.`;
+
     const [descResult, titleResult, metaDescResult, tagsResult, faqResult] = await Promise.allSettled([
       aiGenerate(descSystem, descUser, 6000),
       aiGenerate(`SEO specialist. Output ONLY the meta title text. No quotes. No explanation.`, titleUser),
       aiGenerate(`SEO specialist. Output ONLY the meta description text. No quotes. No explanation.`, metaDescUser),
       aiGenerate(`Shopify SEO expert. Output ONLY comma-separated tags. No explanation.`, tagsUser),
-      aiGenerate(`Voice search SEO expert. Output ONLY valid JSON array. No markdown.`, faqUser, 2200),
+      aiGenerate(faqSystemPrompt, faqUser, 3000),
     ]);
 
     const newDesc     = descResult.status     === "fulfilled" ? reformatFaqSection(ensureDeityPresent(stripHeadingSuffixes(stripTruncatedTrailingTag(cleanHTML(descResult.value))), mukhiFacts, selectedProduct.title)) : "<p>Generation failed.</p>";
@@ -1476,8 +1484,22 @@ DEPTH RULE (mandatory, applies specifically to "Traditional Benefits" and "Who S
     setAgent("tags",     tagsResult.status     === "fulfilled" ? "done" : "error", tagsResult.status     === "fulfilled" ? "✓ Done" : "✗ Failed");
 
     if (faqResult.status === "fulfilled") {
-      try { generatedFAQs = JSON.parse(extractJsonValue(faqResult.value)); setAgent("faq","done",`✓ ${generatedFAQs.length} Q&As`); }
-      catch(e) { generatedFAQs = []; setAgent("faq","error","✗ Parse failed"); console.warn("FAQ JSON parse failed:", e.message, "— raw response (first 300 chars):", faqResult.value.slice(0, 300)); }
+      try {
+        generatedFAQs = parseJsonSafe(faqResult.value);
+        setAgent("faq","done",`✓ ${generatedFAQs.length} Q&As`);
+      } catch(e) {
+        console.warn("FAQ JSON parse failed on first attempt:", e.message, "— retrying once. Raw response (first 300 chars):", faqResult.value.slice(0, 300));
+        setAgent("faq", "running", "Retrying FAQ parse…");
+        try {
+          const retryRaw = await withTimeout(aiGenerate(faqSystemPrompt, faqUser, 3000), 25000, "FAQ retry");
+          generatedFAQs = parseJsonSafe(retryRaw);
+          setAgent("faq","done",`✓ ${generatedFAQs.length} Q&As (retry)`);
+        } catch(e2) {
+          generatedFAQs = [];
+          setAgent("faq","error","✗ Parse failed");
+          console.warn("FAQ JSON parse failed on retry too:", e2.message);
+        }
+      }
     } else { setAgent("faq","error","✗ Failed"); }
 
     document.getElementById("currentMetaTitle").textContent = selectedProduct.metafields_global_title_tag || "(not set)";
@@ -1545,6 +1567,54 @@ function extractJsonValue(text) {
   return stripped.slice(start, end + 1);
 }
 
+// ─── JSON repair helpers (mirrors server.js) ───────────────────────────────
+// The most common reason JSON.parse fails on an otherwise-correct-looking LLM
+// response is a literal, unescaped line break (or tab) inside a string value
+// — the model writes text as if it were prose, forgetting that within a JSON
+// string a newline must be encoded as \n, not an actual line break. This is
+// invisible when eyeballing the raw text (it just looks like a paragraph
+// break) but throws "Bad control character in string literal" on parse. This
+// walks the text tracking whether it's inside a quoted string (respecting
+// escape sequences) and only touches control characters found there, so
+// structural JSON whitespace between tokens is left completely alone.
+function sanitizeJsonControlChars(text) {
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) { out += ch; escaped = false; continue; }
+      if (ch === "\\") { out += ch; escaped = true; continue; }
+      if (ch === '"') { inString = false; out += ch; continue; }
+      if (ch === "\n") { out += "\\n"; continue; }
+      if (ch === "\r") { continue; }
+      if (ch === "\t") { out += "\\t"; continue; }
+      out += ch;
+    } else {
+      if (ch === '"') { inString = true; out += ch; continue; }
+      out += ch;
+    }
+  }
+  return out;
+}
+
+// Second common failure mode: a trailing comma before a closing ] or } —
+// valid-looking JSON that most LLMs occasionally produce, but strict
+// JSON.parse rejects it outright.
+function stripTrailingCommas(text) {
+  return text.replace(/,(\s*[\]}])/g, "$1");
+}
+
+// Combines extractJsonValue + both repairs + JSON.parse into one call, so
+// every JSON-producing call site in the pipeline (keywords, gaps, FAQ,
+// cannibalization) gets the same resilience without repeating this logic.
+function parseJsonSafe(rawText) {
+  const extracted = extractJsonValue(rawText);
+  const repaired  = stripTrailingCommas(sanitizeJsonControlChars(extracted));
+  return JSON.parse(repaired);
+}
+
 // ─── FAQ Render ───────────────────────────────────────────────────────────────
 function renderFAQSection(faqs) {
   if (!faqs || faqs.length === 0) { document.getElementById("faqDisplay").innerHTML = '<div class="text-muted">No FAQs generated.</div>'; return; }
@@ -1609,7 +1679,7 @@ async function runSGEAnalysis(descHtml, productTitle, isService = false) {
       `You are an AI search citation analyst. Output ONLY valid JSON. No markdown.`,
       `Analyse this ${isService ? "service page" : "product page"} for Google SGE citation probability.\n\nProduct: "${productTitle}"\nContent: "${descText.slice(0,2000)}"\n\nScore 5 passage types (1-10):\n1. "Definition/What it is"\n2. "Spiritual/Traditional significance"\n3. "${isService ? "Vadhyar credentials/Authenticity" : "Authentication/Certification"}"\n4. "Who should use it"\n5. "${isService ? "How the service works" : "How to use/wear it"}"\n\nOutput ONLY JSON:\n{"passages":[{"type":"...","score":0,"reason":"..."}],"overallScore":0,"verdict":"High","improvements":["...","...","..."]}`, 1000
     );
-    const sgeData = JSON.parse(extractJsonValue(sgeRaw));
+    const sgeData = parseJsonSafe(sgeRaw);
     renderSGEAnalysis(sgeData);
   } catch(e) { document.getElementById("sgePassageList").innerHTML = '<div class="text-muted">SGE analysis unavailable.</div>'; }
 }
@@ -1739,7 +1809,7 @@ async function runCannibalizationCheck() {
       const batch = products.slice(i, i+batchSize);
       const raw = await aiGenerate(`Shopify SEO cannibalization analyst. Output ONLY valid JSON array. No markdown.`,
         `Analyse these ${batch.length} products for keyword cannibalization:\n${batch.map((p,idx)=>`${i+idx+1}. "${p.title}" | Tags: ${(p.tags||"").split(",").slice(0,8).join(", ")||"none"}`).join("\n")}\n\nOutput ONLY JSON: [{"products":["title1","title2"],"sharedKeywords":["kw1"],"severity":"high","recommendation":"fix"}] or []`, 2000);
-      try { allConflicts.push(...JSON.parse(extractJsonValue(raw))); } catch(e) { console.warn("Cannibalization JSON parse failed:", e.message, "— raw response (first 300 chars):", raw.slice(0, 300)); }
+      try { allConflicts.push(...parseJsonSafe(raw)); } catch(e) { console.warn("Cannibalization JSON parse failed:", e.message, "— raw response (first 300 chars):", raw.slice(0, 300)); }
       if (i+batchSize < products.length) await new Promise(r=>setTimeout(r,1000));
     }
     const affectedTitles = new Set(); allConflicts.forEach(c=>c.products.forEach(p=>affectedTitles.add(p)));
