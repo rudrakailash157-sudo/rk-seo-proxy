@@ -289,6 +289,12 @@
       <div id="customBlocksList" class="mt-16"></div>
     </div>
 
+    <div class="card">
+      <div class="card-title">🔑 Additional Target Keywords <span style="text-transform:none;letter-spacing:0;font-size:11px">— from your own keyword research, merged with competitor-extracted keywords</span></div>
+      <div class="text-muted" style="font-size:12px;margin-bottom:14px">Paste keywords your own research turned up that the competitor extraction below might be missing — one per line, or comma-separated. These are treated with equal priority to the extracted H1 keywords when the description is written. Re-enter for each product; this box clears on product change.</div>
+      <textarea id="manualKeywords" class="content-box editable" rows="3" placeholder="e.g. rudraksha for anxiety and stress&#10;7 mukhi rudraksha price india&#10;saturn rudraksha remedy"></textarea>
+    </div>
+
     <div class="card hidden" id="compSection">
       <div class="flex-between">
         <div class="card-title" style="margin:0">🔍 Competitor Research — Top Ranking Pages</div>
@@ -1205,6 +1211,7 @@ function onProductChange() {
   document.getElementById("customBlockLabel").value = "";
   document.getElementById("customBlockHeading").value = "";
   document.getElementById("customBlockText").value = "";
+  document.getElementById("manualKeywords").value = "";
 
   if (!selectedProduct) {
     badge.style.display = "none"; warning.classList.add("hidden"); svcBadge.classList.add("hidden");
@@ -1354,14 +1361,22 @@ async function runAllAgents() {
     const totalKw = (extractedKeywords.h1||[]).length + (extractedKeywords.h2h3||[]).length + (extractedKeywords.phrases||[]).length;
     setAgent("keywords", "done", totalKw > 0 ? `✓ ${totalKw} keywords` : "✓ No keywords");
 
+    const manualKeywords = parseManualKeywords(document.getElementById("manualKeywords")?.value);
+    if (manualKeywords.length > 0) console.log(`🔑 ${manualKeywords.length} manual keyword(s) supplied by store owner, merging with extracted keywords`);
+
+    let keywordBriefParts = [];
     if (totalKw > 0) {
       const kw = extractedKeywords;
-      keywordBrief = [
+      keywordBriefParts = [
         (kw.h1||[]).length    ? `H1 PRIMARY KEYWORDS: ${(kw.h1||[]).slice(0,5).join(" / ")}` : "",
         (kw.h2h3||[]).length  ? `H2/H3 SUB-TOPIC KEYWORDS: ${(kw.h2h3||[]).slice(0,8).join(", ")}` : "",
         (kw.phrases||[]).length ? `LONG-TAIL INTENT PHRASES: ${(kw.phrases||[]).slice(0,8).join(", ")}` : "",
-      ].filter(Boolean).join("\n");
+      ].filter(Boolean);
     }
+    if (manualKeywords.length > 0) {
+      keywordBriefParts.push(`STORE OWNER KEYWORDS (from Subbu's own keyword research — MANDATORY, treat with equal priority to the H1 PRIMARY KEYWORDS above): ${manualKeywords.join(", ")}`);
+    }
+    keywordBrief = keywordBriefParts.join("\n");
 
     // Agent 3: Gap analysis
     setAgent("gaps", "running", "Identifying gaps…");
@@ -1402,7 +1417,7 @@ async function runAllAgents() {
     const anchorContentBlock = isBead ? buildAnchorContentBlock(anchorItems) : "";
     const selfContainedRule = `SELF-CONTAINED SENTENCE RULE (critical for AI/GEO extraction — this determines whether a passage can be lifted into an AI-generated answer): every bullet and every sentence must pass this test — read alone, with no heading and no surrounding text, does it still make complete sense? Concretely: (1) never open a bullet with a bare fragment like "Ruled by Shani (Saturn)…" — give it an explicit subject, e.g. "${selectedProduct.title} is traditionally associated with Shani (Saturn)…"; (2) never start a bullet with a bare pronoun ("It…", "This…") with no stated antecedent in the same sentence — restate the product name or "this bead"/"this mala" instead; (3) each bullet must read as a complete, standalone claim understandable with zero prior context, not a continuation of the heading above it.`;
     const kwPlacement = keywordBrief
-      ? `MANDATORY KEYWORD PLACEMENT:\n${keywordBrief}\n\nRULES:\n- <h2>: include a H1 PRIMARY KEYWORD\n- Opening <p>: include H1 keyword within first 60 words\n- <h3> headings: use H2/H3 KEYWORDS naturally\n- Bullets: address LONG-TAIL INTENT PHRASES as experience statements\n- FAQ: word 2+ questions using exact LONG-TAIL INTENT PHRASE phrasing\n\n${selfContainedRule}`
+      ? `MANDATORY KEYWORD PLACEMENT:\n${keywordBrief}\n\nRULES:\n- <h2>: include a H1 PRIMARY KEYWORD\n- Opening <p>: include H1 keyword within first 60 words\n- <h3> headings: use H2/H3 KEYWORDS naturally\n- Bullets: address LONG-TAIL INTENT PHRASES as experience statements\n- FAQ: word 2+ questions using exact LONG-TAIL INTENT PHRASE phrasing\n- STORE OWNER KEYWORDS: distribute all of these naturally across the description — headings, opening paragraph, bullets, or FAQ, wherever each one fits best — do not skip any and do not force them all into a single section\n\n${selfContainedRule}`
       : `Use standard SEO keywords appropriate to this product/service.\n\n${selfContainedRule}`;
 
     const descSystem = isService
@@ -1584,6 +1599,16 @@ function withTimeout(promise, ms, label = "Operation") {
 }
 
 function cleanHTML(text) { return text.replace(/^```(?:html)?\s*/i,"").replace(/\s*```\s*$/,"").trim(); }
+
+// Splits the manual keywords textarea on commas and/or newlines, trims each
+// entry, and drops blanks — so the store owner can paste either a comma-
+// separated list or one keyword per line, whichever they've already got.
+function parseManualKeywords(raw) {
+  return (raw || "")
+    .split(/[\n,]+/)
+    .map(k => k.trim())
+    .filter(Boolean);
+}
 
 function extractJsonValue(text) {
   const stripped = (text || "").replace(/^```json\s*/i, "").replace(/```\s*$/i, "").trim();
