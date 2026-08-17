@@ -998,6 +998,39 @@ function isMalaProduct(title) {
   return /\bmala\b/i.test(title || "");
 }
 
+// ─── Product-form keyword filter ────────────────────────────────────────────
+// runCompetitorResearch() pulls from whatever ranks for a given search query
+// — and competitor pages for single beads, malas, and bracelets all mix
+// together in those results. Without filtering, a phrase like "14 Benefits of
+// 7 Mukhi Rudraksha Mala" (pulled from a competitor's MALA page) can surface
+// as an H1 keyword suggestion for a SINGLE-BEAD product, and kwPlacementInstructions
+// then instructs the writer to work it into the <h2> — pushing "Mala" language
+// into a page that isn't a mala. This deterministically drops any extracted
+// keyword that names a product form (mala/bracelet) different from the
+// current product's own form, before the keyword brief is ever built. Form-
+// neutral keywords (no mala/bracelet mention at all) are always kept.
+function getProductForm(title) {
+  const t = (title || "").toLowerCase();
+  if (/\bmala\b/.test(t)) return "mala";
+  if (/\bbracelet\b/.test(t)) return "bracelet";
+  return "single";
+}
+
+function filterKeywordsByProductForm(keywords, productTitle) {
+  const currentForm = getProductForm(productTitle);
+  const formRe = /\b(mala|malas|bracelet|bracelets)\b/i;
+  const filterList = (list) => (list || []).filter(kw => {
+    if (!formRe.test(kw)) return true;
+    const kwForm = /\b(mala|malas)\b/i.test(kw) ? "mala" : "bracelet";
+    if (kwForm !== currentForm) {
+      console.warn(`⚠️  Dropped form-mismatched keyword "${kw}" (${kwForm}) for "${productTitle}" (${currentForm})`);
+      return false;
+    }
+    return true;
+  });
+  return { h1: filterList(keywords.h1), h2h3: filterList(keywords.h2h3), phrases: filterList(keywords.phrases) };
+}
+
 function buildOriginBlock(origin) {
   if (!origin) {
     return `ORIGIN: No verified origin mapping exists for this specific product. Do NOT default to Nepal or any other origin — state origin only if it is already present in CURRENT DESCRIPTION below, otherwise omit origin claims entirely rather than guess.\n`;
@@ -1758,6 +1791,7 @@ async function runSEOPipeline(product) {
       try {
         const kw = parseJsonSafe(kwRaw);
         extractedKeywords = { h1: kw.h1||[], h2h3: kw.h2h3||[], phrases: kw.phrases||[] };
+        extractedKeywords = filterKeywordsByProductForm(extractedKeywords, product.title);
         const h1List = extractedKeywords.h1.slice(0,5).join(" / ");
         const h2h3List = extractedKeywords.h2h3.slice(0,8).join(", ");
         const phraseList = extractedKeywords.phrases.slice(0,8).join(", ");
