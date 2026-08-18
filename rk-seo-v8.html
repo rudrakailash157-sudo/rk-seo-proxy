@@ -684,6 +684,27 @@ function filterKeywordsByProductForm(keywords, productTitle) {
   return { h1: filterList(keywords.h1), h2h3: filterList(keywords.h2h3), phrases: filterList(keywords.phrases) };
 }
 
+// ─── Price/buying-intent keyword detection (mirrors server.js) ─────────────
+// A keyword like "cost of 7 mukhi rudraksha" or "7 mukhi rudraksha price" is
+// commercial-intent, not content-intent — the RULE that says "FAQ: word 2+
+// questions using exact LONG-TAIL INTENT PHRASE phrasing" would otherwise
+// instruct the writer to produce a question like "What is the cost of 7
+// Mukhi Rudraksha?" with no guardrail against answering it with an invented,
+// soon-to-be-stale rupee figure (the same failure mode MEASUREMENT ACCURACY
+// RULE already prevents for bead size/weight). Splitting these out lets the
+// prompt (1) keep them out of <h2>/<h3>/opening-paragraph placement, where a
+// bare "Price" keyword would read like an ad rather than a product page, and
+// (2) hand them a specific, safe instruction instead of the generic one.
+// Also catches manually-entered price keywords from the Additional Target
+// Keywords box, same as it catches competitor-extracted ones.
+const PRICE_INTENT_RE = /\b(price|prices|priced|pricing|cost|costs|costing|cheap|cheapest|buy|buying|purchase|kimat|keemat|kimmat)\b/i;
+
+function splitPriceIntentKeywords(list) {
+  const price = [], rest = [];
+  (list || []).forEach(kw => (PRICE_INTENT_RE.test(kw) ? price : rest).push(kw));
+  return { price, rest };
+}
+
 // ─── Origin resolution ─────────────────────────────────────────────────────────
 function resolveOrigin(title, isMala) {
   const t = (title || "").toLowerCase();
@@ -1446,17 +1467,26 @@ async function runContentGeneration() {
   if (manualKeywords.length > 0) console.log(`🔑 ${manualKeywords.length} manual keyword(s) supplied by store owner, merging with extracted keywords`);
   manualKeywords = dedupeManualKeywords(manualKeywords, extractedKeywords);
 
+  const h1Split      = splitPriceIntentKeywords(extractedKeywords.h1);
+  const h2h3Split     = splitPriceIntentKeywords(extractedKeywords.h2h3);
+  const phrasesSplit = splitPriceIntentKeywords(extractedKeywords.phrases);
+  const manualSplit  = splitPriceIntentKeywords(manualKeywords);
+  const priceIntentKeywords = [...h1Split.price, ...h2h3Split.price, ...phrasesSplit.price, ...manualSplit.price];
+  if (priceIntentKeywords.length > 0) console.log(`💰 Routed ${priceIntentKeywords.length} price/buying-intent keyword(s) to safe FAQ handling (no invented numbers): ${priceIntentKeywords.join(", ")}`);
+
   let keywordBriefParts = [];
   if (totalKw > 0) {
-    const kw = extractedKeywords;
     keywordBriefParts = [
-      (kw.h1||[]).length    ? `H1 PRIMARY KEYWORDS: ${(kw.h1||[]).slice(0,5).join(" / ")}` : "",
-      (kw.h2h3||[]).length  ? `H2/H3 SUB-TOPIC KEYWORDS: ${(kw.h2h3||[]).slice(0,8).join(", ")}` : "",
-      (kw.phrases||[]).length ? `LONG-TAIL INTENT PHRASES: ${(kw.phrases||[]).slice(0,8).join(", ")}` : "",
+      h1Split.rest.length      ? `H1 PRIMARY KEYWORDS: ${h1Split.rest.slice(0,5).join(" / ")}` : "",
+      h2h3Split.rest.length    ? `H2/H3 SUB-TOPIC KEYWORDS: ${h2h3Split.rest.slice(0,8).join(", ")}` : "",
+      phrasesSplit.rest.length ? `LONG-TAIL INTENT PHRASES: ${phrasesSplit.rest.slice(0,8).join(", ")}` : "",
     ].filter(Boolean);
   }
-  if (manualKeywords.length > 0) {
-    keywordBriefParts.push(`STORE OWNER KEYWORDS (from Subbu's own keyword research — MANDATORY, treat with equal priority to the H1 PRIMARY KEYWORDS above): ${manualKeywords.join(", ")}`);
+  if (manualSplit.rest.length > 0) {
+    keywordBriefParts.push(`STORE OWNER KEYWORDS (from Subbu's own keyword research — MANDATORY, treat with equal priority to the H1 PRIMARY KEYWORDS above): ${manualSplit.rest.join(", ")}`);
+  }
+  if (priceIntentKeywords.length > 0) {
+    keywordBriefParts.push(`PRICE/COST/BUYING-INTENT KEYWORDS (handle per the PRICE ACCURACY RULE below — do NOT use as a heading or opening-paragraph keyword): ${priceIntentKeywords.join(", ")}`);
   }
   const keywordBrief = keywordBriefParts.join("\n");
 
@@ -1477,7 +1507,7 @@ async function runContentGeneration() {
     const anchorContentBlock = isBead ? buildAnchorContentBlock(anchorItems) : "";
     const selfContainedRule = `SELF-CONTAINED SENTENCE RULE (critical for AI/GEO extraction — this determines whether a passage can be lifted into an AI-generated answer): every bullet and every sentence must pass this test — read alone, with no heading and no surrounding text, does it still make complete sense? Concretely: (1) never open a bullet with a bare fragment like "Ruled by Shani (Saturn)…" — give it an explicit subject, e.g. "${selectedProduct.title} is traditionally associated with Shani (Saturn)…"; (2) never start a bullet with a bare pronoun ("It…", "This…") with no stated antecedent in the same sentence — restate the product name or "this bead"/"this mala" instead; (3) each bullet must read as a complete, standalone claim understandable with zero prior context, not a continuation of the heading above it.`;
     const kwPlacement = keywordBrief
-      ? `MANDATORY KEYWORD PLACEMENT:\n${keywordBrief}\n\nRULES:\n- <h2>: include a H1 PRIMARY KEYWORD\n- Opening <p>: include H1 keyword within first 60 words\n- <h3> headings: use H2/H3 KEYWORDS naturally\n- Bullets: address LONG-TAIL INTENT PHRASES as experience statements\n- FAQ: word 2+ questions using exact LONG-TAIL INTENT PHRASE phrasing\n- STORE OWNER KEYWORDS: distribute all of these naturally across the description — headings, opening paragraph, bullets, or FAQ, wherever each one fits best — do not skip any and do not force them all into a single section\n\n${selfContainedRule}`
+      ? `MANDATORY KEYWORD PLACEMENT:\n${keywordBrief}\n\nRULES:\n- <h2>: include a H1 PRIMARY KEYWORD\n- Opening <p>: include H1 keyword within first 60 words\n- <h3> headings: use H2/H3 KEYWORDS naturally\n- Bullets: address LONG-TAIL INTENT PHRASES as experience statements\n- FAQ: word 2+ questions using exact LONG-TAIL INTENT PHRASE phrasing\n- STORE OWNER KEYWORDS: distribute all of these naturally across the description — headings, opening paragraph, bullets, or FAQ, wherever each one fits best — do not skip any and do not force them all into a single section\n- PRICE/COST/BUYING-INTENT KEYWORDS: address the underlying intent in ONE FAQ answer only, WITHOUT stating a specific rupee figure or number — explain what factors influence price (bead size, mukhi count, certification, silver capping if selected) and note that current price is shown in the price/variant selector on this page. Never invent, estimate, or state a specific price anywhere in the output — see PRICE ACCURACY RULE.\n\n${selfContainedRule}`
       : `Use standard SEO keywords appropriate to this product/service.\n\n${selfContainedRule}`;
 
     const descSystem = isService
@@ -1500,6 +1530,7 @@ ORIGIN RULE (mandatory — read carefully, this varies per product and is suppli
 SPECIES RULE (mandatory — same principle as ORIGIN RULE above): the SPECIES field in the VERIFIED ORIGIN block states the one correct botanical species for THIS specific product. Most Rudraksha on this site are Elaeocarpus ganitrus, but not all — the 1 Mukhi Half-Moon (Chandrakar) is Elaeocarpus tuberculatus, a genuinely different species, disclosed transparently rather than glossed over. Never assume Elaeocarpus ganitrus as a universal default; always use the exact species stated in that block, including in the RKRTL Authentication/Certification section.
 EVIDENCE REQUIREMENT for hedged/experience sections: every "seekers report/describe" bullet must anchor to one named specific in the same sentence — a scripture, mantra, planetary period, or chakra. A hedge with no named specific attached (e.g. "seekers report enhanced focus" alone) is not acceptable output.
 MEASUREMENT ACCURACY RULE (mandatory): Never state a specific bead size (mm) or weight (grams) as fact anywhere in the output — intro, bullets, or FAQ — unless that exact figure is present in the product's current description passed to you. Nothing in this pipeline feeds real Shopify variant data into this prompt, so any size/weight you generate is invented, not accurate, and risks contradicting the actual variant the customer selects. If no size/weight is available, omit specific measurements entirely and let the product's variant selector convey size instead.
+PRICE ACCURACY RULE (mandatory): Never state a specific price, cost figure, or rupee amount anywhere in the output — intro, bullets, or FAQ. Live pricing is already shown to the customer via the product's price/variant selector and a separate, deterministically-generated Pricing & Availability block built fresh from real Shopify data — this description must never duplicate or guess at a number, since prices vary by size/variant and change over time, and a stale or invented figure here would contradict the real price shown elsewhere on the page. If a price/cost-related keyword is supplied (see PRICE/COST/BUYING-INTENT KEYWORDS above, if present), address the underlying intent qualitatively — what factors influence price — rather than with a number.
 VERIFIED ANCHOR CONTENT RULE (mandatory — distinct from VERIFIED MUKHI FACTS above): the VERIFIED ANCHOR CONTENT block in the user message contains real, confirmed operational/testing facts specific to this product or universal to all Rudraksha products (exact screening steps, measurement methods, verification process). These exist specifically to break the repetitive "seekers traditionally associate/report/describe" template pattern that recurs identically across every product page — Google's 2026 core updates specifically target this kind of cosmetic-variation-only content at catalog scale. Weave the supplied anchor content into the RKRTL Authentication section (or a short additional section immediately after it) as factual, non-hedged prose — do NOT wrap these in "seekers report" language, since they are verifiable process claims, not belief claims. If the block states no anchor content was supplied, do not invent a substitute — proceed without that passage.
 GMC IDENTITY & BELIEF POLICY RULES (critical — violations cause ad restrictions):
 - NEVER use deity names (Shiva, Vishnu, Ganesha, Hanuman, Lakshmi, Durga, Parvati, Brahma, Indra, etc.) in H1, H2, or H3 headings
@@ -1564,7 +1595,7 @@ DEPTH RULE (mandatory, applies specifically to "Traditional Benefits" and "Who S
       ? `Generate 6 voice-search FAQ pairs for "${selectedProduct.title}" on RudraKailash.com.\n\nRules:\n- Natural spoken language questions\n- Answers 80-150 words, fully self-contained so each one stands alone as a citable passage\n- Include: what Sphatik (natural rock crystal) is, its Vedic significance (Lakshmi, Chandra), how it's authenticated (refractive index / Mohs hardness testing — natural quartz = 7), who should wear it, care instructions\n- NEVER X-ray, NEVER RKRTL, NEVER Elaeocarpus ganitrus, NEVER mukhi language — this is a MINERAL, not Rudraksha\n\nOutput ONLY JSON: [{"q":"Question?","a":"Answer, 80-150 words."},...] 6 items.`
       : isTulsi
       ? `Generate 6 voice-search FAQ pairs for "${selectedProduct.title}" on RudraKailash.com.\n\nRules:\n- Natural spoken language questions\n- Answers 80-150 words, fully self-contained so each one stands alone as a citable passage\n- Include: what Tulsi (Holy Basil / Ocimum tenuiflorum) mala is, Vaishnava significance, who should wear it, care instructions\n- CRITICAL: no authentication/testing/certification method is established for this product — do NOT include a question about authenticity verification, and do NOT reference RKRTL, "certified," or "verified" anywhere\n- NEVER X-ray, NEVER Elaeocarpus ganitrus, NEVER mukhi language — this is a different plant genus entirely, not Rudraksha\n\nOutput ONLY JSON: [{"q":"Question?","a":"Answer, 80-150 words."},...] 6 items.`
-      : `Generate 6 voice-search FAQ pairs for "${selectedProduct.title}" Rudraksha bead on RudraKailash.com.\n\n${originBlock}\n${mukhiFactsBlock}\n${anchorContentBlock}\nRules:\n- Natural spoken language questions\n- Answers 80-150 words, fully self-contained so each one stands alone as a citable passage — no dangling references to "as mentioned above"\n- Include: what it is, who should wear it, how to wear it, RKRTL authentication process, botanical species (per the SPECIES block above), buying advice\n- If VERIFIED ANCHOR FAQ content is supplied above, ALL of those FAQs MUST be included among the 6 pairs (verbatim or lightly reworded, meaning unchanged) — expand beyond 6 pairs if needed to fit every supplied anchor FAQ, rather than omitting any or inventing a substitute\n- If any answer touches origin, it MUST use the exact origin from the VERIFIED ORIGIN block above — do not default to Nepal or invent an alternate origin if a different one is stated there, and never state two different origins across different answers\n- If any answer touches botanical species, it MUST use the exact species from the SPECIES block above — do not default to Elaeocarpus ganitrus if a different species is stated there, and never state two different species across different answers\n- If any answer touches deity, planet, chakra, or mantra, it MUST match the VERIFIED MUKHI FACTS above exactly — do not substitute or invent an alternative\n- Use "seekers report" framing for belief/tradition claims only — VERIFIED ANCHOR CONTENT claims are factual/operational and should stay direct, not hedged\n- If RKRTL is mentioned, expand it on first use exactly as "RKRTL (Kailasha Rudraksha Testing Laboratory)" — never any other expansion\n- Avoid leading with deity names in questions\n- NEVER state a specific bead size in mm or weight in grams in any answer — natural size ranges vary by mukhi count, origin, and current inventory batch, so an invented figure risks being factually wrong\n\nOutput ONLY JSON: [{"q":"Question?","a":"Answer, 80-150 words."},...] 6 items.`;
+      : `Generate 6 voice-search FAQ pairs for "${selectedProduct.title}" Rudraksha bead on RudraKailash.com.\n\n${originBlock}\n${mukhiFactsBlock}\n${anchorContentBlock}\nRules:\n- Natural spoken language questions\n- Answers 80-150 words, fully self-contained so each one stands alone as a citable passage — no dangling references to "as mentioned above"\n- Include: what it is, who should wear it, how to wear it, RKRTL authentication process, botanical species (per the SPECIES block above), buying advice (qualitative guidance only — see PRICE ACCURACY rule below, never a specific number)\n- If VERIFIED ANCHOR FAQ content is supplied above, ALL of those FAQs MUST be included among the 6 pairs (verbatim or lightly reworded, meaning unchanged) — expand beyond 6 pairs if needed to fit every supplied anchor FAQ, rather than omitting any or inventing a substitute\n- If any answer touches origin, it MUST use the exact origin from the VERIFIED ORIGIN block above — do not default to Nepal or invent an alternate origin if a different one is stated there, and never state two different origins across different answers\n- If any answer touches botanical species, it MUST use the exact species from the SPECIES block above — do not default to Elaeocarpus ganitrus if a different species is stated there, and never state two different species across different answers\n- If any answer touches deity, planet, chakra, or mantra, it MUST match the VERIFIED MUKHI FACTS above exactly — do not substitute or invent an alternative\n- Use "seekers report" framing for belief/tradition claims only — VERIFIED ANCHOR CONTENT claims are factual/operational and should stay direct, not hedged\n- If RKRTL is mentioned, expand it on first use exactly as "RKRTL (Kailasha Rudraksha Testing Laboratory)" — never any other expansion\n- Avoid leading with deity names in questions\n- NEVER state a specific bead size in mm or weight in grams in any answer — natural size ranges vary by mukhi count, origin, and current inventory batch, so an invented figure risks being factually wrong\n- PRICE ACCURACY (mandatory): if a question touches price or cost, NEVER state a specific rupee figure or number — explain what factors influence price (size, mukhi count, certification, silver capping if applicable) and direct the reader to the price/variant selector on the page for the current figure, since prices vary by size and change over time\n\nOutput ONLY JSON: [{"q":"Question?","a":"Answer, 80-150 words."},...] 6 items.`;
 
     // Strict JSON-validity instructions, on top of the schema itself, since the
     // single most common cause of FAQ generation silently ending up empty is
