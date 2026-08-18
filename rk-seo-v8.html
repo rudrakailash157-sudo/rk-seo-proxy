@@ -1298,11 +1298,36 @@ function onProductChange() {
 }
 
 // ─── Agent helpers ────────────────────────────────────────────────────────────
-function setAgent(id, state, msg) {
+function setAgent(id, state, msg, fullText) {
   const el = document.getElementById("agent-" + id);
   if (!el) return;
   el.className = "agent-card" + (state === "running" ? " running" : state === "done" ? " done" : state === "error" ? " error" : "");
-  el.querySelector(".agent-status").innerHTML = state === "running" ? `<span class="spinner"></span><span class="pulse">${msg}</span>` : msg;
+  const statusEl = el.querySelector(".agent-status");
+  statusEl.innerHTML = state === "running" ? `<span class="spinner"></span><span class="pulse">${msg}</span>` : msg;
+  statusEl.title = fullText || "";
+}
+
+// Extracts the actual rejection reason from a Promise.allSettled result (or a
+// caught error) and returns both a short, HTML-escaped label for the agent
+// card and the full untruncated text for a hover tooltip — so a real error
+// like "HTTP 500: ANTHROPIC_API_KEY not configured" or a rate-limit message
+// shows up directly in the UI instead of a generic, undiagnosable "✗ Failed".
+function describeFailure(reasonOrResult) {
+  const reason = reasonOrResult && reasonOrResult.reason !== undefined ? reasonOrResult.reason : reasonOrResult;
+  const raw = String((reason && reason.message) || reason || "Unknown error");
+  const short = raw.length > 55 ? raw.slice(0, 55) + "…" : raw;
+  return { short: `✗ ${escHtml(short)}`, full: raw };
+}
+
+// Convenience wrapper for the common "done on fulfilled, show real error on
+// rejected" pattern used for the five content-generation agent cards.
+function setAgentFromResult(id, result, successLabel) {
+  if (result.status === "fulfilled") {
+    setAgent(id, "done", successLabel || "✓ Done");
+  } else {
+    const fail = describeFailure(result);
+    setAgent(id, "error", fail.short, fail.full);
+  }
 }
 function resetAgents() { ["research","keywords","gaps","desc","title","metadesc","tags","faq","schema"].forEach(id => setAgent(id, "", "Waiting…")); }
 
@@ -1353,6 +1378,7 @@ async function runKeywordResearch() {
     // Agent 2: Keyword extraction
     setAgent("keywords", "running", "Extracting keywords…");
     let extractedKeywords = { h1: [], h2h3: [], phrases: [] };
+    let keywordExtractionError = null;
     if (competitors.length > 0) {
       const compHeadingInput = competitors.map((c, i) => {
         const headings = c.headings || {};
@@ -1373,23 +1399,32 @@ async function runKeywordResearch() {
           kwRaw = await withTimeout(kwCall(), 25000, "Keyword extraction retry");
         } catch(e2) {
           console.warn("Keyword extraction attempt 2 failed:", e2.message, "— continuing without keywords");
+          keywordExtractionError = e2;
           kwRaw = "";
         }
       }
-      try {
-        extractedKeywords = parseJsonSafe(kwRaw);
-      } catch(e) {
-        console.warn("Keyword JSON parse failed:", e.message, "— raw response (first 300 chars):", kwRaw.slice(0, 300));
+      if (kwRaw) {
+        try {
+          extractedKeywords = parseJsonSafe(kwRaw);
+        } catch(e) {
+          console.warn("Keyword JSON parse failed:", e.message, "— raw response (first 300 chars):", kwRaw.slice(0, 300));
+        }
       }
     }
     extractedKeywords = filterKeywordsByProductForm(extractedKeywords, selectedProduct.title);
     renderKeywords(extractedKeywords);
     const totalKw = (extractedKeywords.h1||[]).length + (extractedKeywords.h2h3||[]).length + (extractedKeywords.phrases||[]).length;
-    setAgent("keywords", "done", totalKw > 0 ? `✓ ${totalKw} keywords` : "✓ No keywords");
+    if (keywordExtractionError && totalKw === 0) {
+      const fail = describeFailure(keywordExtractionError);
+      setAgent("keywords", "error", fail.short, fail.full);
+    } else {
+      setAgent("keywords", "done", totalKw > 0 ? `✓ ${totalKw} keywords` : "✓ No keywords");
+    }
 
     // Agent 3: Gap analysis
     setAgent("gaps", "running", "Identifying gaps…");
     let gaps = [], gapSummary = "Cover all key topics comprehensively.";
+    let gapAnalysisError = null;
     if (competitors.length > 0) {
       const compTexts = competitors.map((c,i) => `Competitor ${i+1}:\n${(c.content||c.snippet||"").slice(0,500)}`).join("\n---\n");
       const descPlain0 = (selectedProduct.body_html||"").replace(/<[^>]+>/g,"").slice(0,400);
@@ -1407,14 +1442,22 @@ async function runKeywordResearch() {
           gapRes = await withTimeout(gapCall(), 25000, "Gap analysis retry");
         } catch(e2) {
           console.warn("Gap analysis attempt 2 failed:", e2.message, "— continuing without gaps");
+          gapAnalysisError = e2;
           gapRes = "";
         }
       }
-      try { gaps = parseJsonSafe(gapRes); } catch(e) { console.warn("Gap analysis JSON parse failed:", e.message, "— raw response (first 300 chars):", gapRes.slice(0, 300)); }
+      if (gapRes) {
+        try { gaps = parseJsonSafe(gapRes); } catch(e) { console.warn("Gap analysis JSON parse failed:", e.message, "— raw response (first 300 chars):", gapRes.slice(0, 300)); }
+      }
       gapSummary = gaps.length > 0 ? `Fill these gaps: ${gaps.join("; ")}` : gapSummary;
     }
     renderGaps(gaps);
-    setAgent("gaps", "done", gaps.length > 0 ? `✓ ${gaps.length} gaps` : "✓ No gaps");
+    if (gapAnalysisError && gaps.length === 0) {
+      const fail = describeFailure(gapAnalysisError);
+      setAgent("gaps", "error", fail.short, fail.full);
+    } else {
+      setAgent("gaps", "done", gaps.length > 0 ? `✓ ${gaps.length} gaps` : "✓ No gaps");
+    }
 
     researchState = { productId: selectedProduct.id, competitors, extractedKeywords, gaps, gapSummary, before };
     document.getElementById("generateSection").classList.remove("hidden");
@@ -1627,10 +1670,10 @@ DEPTH RULE (mandatory, applies specifically to "Traditional Benefits" and "Who S
     const newMetaDesc = metaDescResult.status === "fulfilled" ? metaDescResult.value.trim()     : "";
     const newTags     = tagsResult.status     === "fulfilled" ? tagsResult.value.trim()         : selectedProduct.tags || "";
 
-    setAgent("desc",     descResult.status     === "fulfilled" ? "done" : "error", descResult.status     === "fulfilled" ? "✓ Done" : "✗ Failed");
-    setAgent("title",    titleResult.status    === "fulfilled" ? "done" : "error", titleResult.status    === "fulfilled" ? "✓ Done" : "✗ Failed");
-    setAgent("metadesc", metaDescResult.status === "fulfilled" ? "done" : "error", metaDescResult.status === "fulfilled" ? "✓ Done" : "✗ Failed");
-    setAgent("tags",     tagsResult.status     === "fulfilled" ? "done" : "error", tagsResult.status     === "fulfilled" ? "✓ Done" : "✗ Failed");
+    setAgentFromResult("desc", descResult);
+    setAgentFromResult("title", titleResult);
+    setAgentFromResult("metadesc", metaDescResult);
+    setAgentFromResult("tags", tagsResult);
 
     if (faqResult.status === "fulfilled") {
       try {
@@ -1645,11 +1688,15 @@ DEPTH RULE (mandatory, applies specifically to "Traditional Benefits" and "Who S
           setAgent("faq","done",`✓ ${generatedFAQs.length} Q&As (retry)`);
         } catch(e2) {
           generatedFAQs = [];
-          setAgent("faq","error","✗ Parse failed");
+          const fail = describeFailure(e2);
+          setAgent("faq","error",`✗ Parse failed: ${fail.short.replace(/^✗ /, "")}`, fail.full);
           console.warn("FAQ JSON parse failed on retry too:", e2.message);
         }
       }
-    } else { setAgent("faq","error","✗ Failed"); }
+    } else {
+      const fail = describeFailure(faqResult);
+      setAgent("faq","error",fail.short, fail.full);
+    }
 
     document.getElementById("currentMetaTitle").textContent = selectedProduct.metafields_global_title_tag || "(not set)";
     document.getElementById("currentMetaDesc").textContent  = selectedProduct.metafields_global_description_tag || "(not set)";
@@ -1665,7 +1712,8 @@ DEPTH RULE (mandatory, applies specifically to "Traditional Benefits" and "Who S
 
     const after = scoreSEO(newTitle, newMetaDesc, newTags, newDesc, isService, isKarungali, isSphatik, isTulsi);
     showScore("scoreAfter", after);
-    document.getElementById("scoreImprovement").textContent = `+${after - before} PTS`;
+    const scoreDelta = after - before;
+    document.getElementById("scoreImprovement").textContent = `${scoreDelta >= 0 ? "+" : ""}${scoreDelta} PTS`;
     document.getElementById("scoreReadiness").textContent   = after >= 80 ? "Excellent — ready to push" : after >= 60 ? "Good — review before push" : "Needs improvement";
 
     renderFAQSection(generatedFAQs);
