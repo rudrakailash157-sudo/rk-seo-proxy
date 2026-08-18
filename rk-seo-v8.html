@@ -1614,6 +1614,9 @@ DEPTH RULE (mandatory, applies specifically to "Traditional Benefits" and "Who S
     ]);
 
     const newDesc     = descResult.status     === "fulfilled" ? reformatFaqSection(ensureDeityPresent(stripHeadingSuffixes(stripTruncatedTrailingTag(cleanHTML(descResult.value))), mukhiFacts, selectedProduct.title)) : "<p>Generation failed.</p>";
+    if (descResult.status === "fulfilled") {
+      checkManualKeywordCoverage(manualSplit.rest, priceIntentKeywords, newDesc, selectedProduct.title);
+    }
     const newTitle    = titleResult.status    === "fulfilled" ? titleResult.value.trim()        : selectedProduct.title;
     const newMetaDesc = metaDescResult.status === "fulfilled" ? metaDescResult.value.trim()     : "";
     const newTags     = tagsResult.status     === "fulfilled" ? tagsResult.value.trim()         : selectedProduct.tags || "";
@@ -1721,6 +1724,34 @@ function dedupeManualKeywords(manualKeywords, extractedKeywords) {
     console.log(`🔑 Skipped ${dropped.length} manual keyword(s) already present in competitor extraction: ${dropped.join(", ")}`);
   }
   return kept;
+}
+
+// Checks which of the "normal" (non-price) manual keywords actually made it
+// into the generated description verbatim. "STORE OWNER KEYWORDS: distribute
+// all of these... do not skip any" is an instruction, not a guarantee — LLMs
+// are known to be unreliable at fully complying with "include every one of
+// these N items" when N is large, and this is especially true for non-
+// English transliteration terms (e.g. Tamil "ruthratcham"/"muga", Hindi
+// "char mukhi") that have no natural place to sit inside flowing English
+// prose. This doesn't try to force compliance — it just makes the gap
+// visible in the console instead of requiring a manual line-by-line diff
+// against the output every time. Price-intent keywords are expected to be
+// consolidated into one FAQ answer rather than reproduced verbatim (per the
+// PRICE ACCURACY RULE), so they're reported separately and not flagged as
+// "missing" in the same way.
+function checkManualKeywordCoverage(normalKeywords, priceIntentKeywords, generatedHtml, productTitle) {
+  const plainText = (generatedHtml || "").replace(/<[^>]+>/g, " ").toLowerCase();
+  const missing = normalKeywords.filter(kw => !plainText.includes(kw.trim().toLowerCase()));
+  if (missing.length > 0) {
+    console.warn(`⚠️  ${missing.length} of ${normalKeywords.length} manual keyword(s) did NOT appear verbatim in the generated description for "${productTitle}": ${missing.join(", ")}`);
+    console.warn(`   (These were sent to the writer — the AI just didn't work them in. Consider rephrasing, dropping ones with low real search volume, or asking for a dedicated FAQ/translation block for transliteration terms.)`);
+  } else if (normalKeywords.length > 0) {
+    console.log(`✅ All ${normalKeywords.length} normal manual keyword(s) appear verbatim in the generated description for "${productTitle}".`);
+  }
+  if (priceIntentKeywords.length > 0) {
+    console.log(`💰 ${priceIntentKeywords.length} price/buying-intent keyword(s) were sent for consolidated FAQ handling (verbatim reproduction not expected — see PRICE ACCURACY RULE): ${priceIntentKeywords.join(", ")}`);
+  }
+  return missing;
 }
 
 function extractJsonValue(text) {
