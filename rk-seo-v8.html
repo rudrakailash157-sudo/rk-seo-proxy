@@ -1471,8 +1471,14 @@ async function runContentGeneration() {
   const h2h3Split     = splitPriceIntentKeywords(extractedKeywords.h2h3);
   const phrasesSplit = splitPriceIntentKeywords(extractedKeywords.phrases);
   const manualSplit  = splitPriceIntentKeywords(manualKeywords);
-  const priceIntentKeywords = [...h1Split.price, ...h2h3Split.price, ...phrasesSplit.price, ...manualSplit.price];
-  if (priceIntentKeywords.length > 0) console.log(`💰 Routed ${priceIntentKeywords.length} price/buying-intent keyword(s) to safe FAQ handling (no invented numbers): ${priceIntentKeywords.join(", ")}`);
+  const extractedPriceIntentKeywords = [...h1Split.price, ...h2h3Split.price, ...phrasesSplit.price];
+  const priceIntentKeywords = [...extractedPriceIntentKeywords, ...manualSplit.price];
+  if (manualKeywords.length > 0) {
+    console.log(`🔑 Breakdown of your ${manualKeywords.length} manual keyword(s): ${manualSplit.rest.length} normal content keyword(s), ${manualSplit.price.length} price/buying-intent keyword(s) (${manualSplit.rest.length} + ${manualSplit.price.length} = ${manualSplit.rest.length + manualSplit.price.length})`);
+  }
+  if (manualSplit.price.length > 0) console.log(`💰 From YOUR manual list — routed to safe FAQ handling: ${manualSplit.price.join(", ")}`);
+  if (extractedPriceIntentKeywords.length > 0) console.log(`💰 From COMPETITOR EXTRACTION (not yours) — also routed to safe FAQ handling: ${extractedPriceIntentKeywords.join(", ")}`);
+  if (priceIntentKeywords.length > 0) console.log(`💰 Combined total sent to the writer for consolidated FAQ handling: ${priceIntentKeywords.length} (${manualSplit.price.length} yours + ${extractedPriceIntentKeywords.length} from extraction)`);
 
   let keywordBriefParts = [];
   if (totalKw > 0) {
@@ -1615,7 +1621,7 @@ DEPTH RULE (mandatory, applies specifically to "Traditional Benefits" and "Who S
 
     const newDesc     = descResult.status     === "fulfilled" ? reformatFaqSection(ensureDeityPresent(stripHeadingSuffixes(stripTruncatedTrailingTag(cleanHTML(descResult.value))), mukhiFacts, selectedProduct.title)) : "<p>Generation failed.</p>";
     if (descResult.status === "fulfilled") {
-      checkManualKeywordCoverage(manualSplit.rest, priceIntentKeywords, newDesc, selectedProduct.title);
+      checkManualKeywordCoverage(manualSplit.rest, manualSplit.price, newDesc, selectedProduct.title);
     }
     const newTitle    = titleResult.status    === "fulfilled" ? titleResult.value.trim()        : selectedProduct.title;
     const newMetaDesc = metaDescResult.status === "fulfilled" ? metaDescResult.value.trim()     : "";
@@ -1739,7 +1745,7 @@ function dedupeManualKeywords(manualKeywords, extractedKeywords) {
 // consolidated into one FAQ answer rather than reproduced verbatim (per the
 // PRICE ACCURACY RULE), so they're reported separately and not flagged as
 // "missing" in the same way.
-function checkManualKeywordCoverage(normalKeywords, priceIntentKeywords, generatedHtml, productTitle) {
+function checkManualKeywordCoverage(normalKeywords, manualPriceIntentKeywords, generatedHtml, productTitle) {
   const plainText = (generatedHtml || "").replace(/<[^>]+>/g, " ").toLowerCase();
   const missing = normalKeywords.filter(kw => !plainText.includes(kw.trim().toLowerCase()));
   if (missing.length > 0) {
@@ -1748,8 +1754,8 @@ function checkManualKeywordCoverage(normalKeywords, priceIntentKeywords, generat
   } else if (normalKeywords.length > 0) {
     console.log(`✅ All ${normalKeywords.length} normal manual keyword(s) appear verbatim in the generated description for "${productTitle}".`);
   }
-  if (priceIntentKeywords.length > 0) {
-    console.log(`💰 ${priceIntentKeywords.length} price/buying-intent keyword(s) were sent for consolidated FAQ handling (verbatim reproduction not expected — see PRICE ACCURACY RULE): ${priceIntentKeywords.join(", ")}`);
+  if (manualPriceIntentKeywords.length > 0) {
+    console.log(`💰 Of your manual keywords, ${manualPriceIntentKeywords.length} were price/buying-intent and sent for consolidated FAQ handling (verbatim reproduction not expected — see PRICE ACCURACY RULE): ${manualPriceIntentKeywords.join(", ")}`);
   }
   return missing;
 }
