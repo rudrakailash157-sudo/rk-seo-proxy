@@ -1656,15 +1656,43 @@ DEPTH RULE (mandatory, applies specifically to "Traditional Benefits" and "Who S
       aiGenerate(faqSystemPrompt, faqUser, 3000),
     ]);
 
-    const newDesc     = descResult.status     === "fulfilled" ? reformatFaqSection(ensureDeityPresent(stripHeadingSuffixes(stripTruncatedTrailingTag(cleanHTML(descResult.value))), mukhiFacts, selectedProduct.title)) : "<p>Generation failed.</p>";
-    if (descResult.status === "fulfilled") {
-      checkManualKeywordCoverage(manualSplit.rest, manualSplit.price, newDesc, selectedProduct.title);
+    let newDesc = descResult.status === "fulfilled" ? reformatFaqSection(ensureDeityPresent(stripHeadingSuffixes(stripTruncatedTrailingTag(cleanHTML(descResult.value))), mukhiFacts, selectedProduct.title)) : "<p>Generation failed.</p>";
+    let descRetried = false;
+    if (descResult.status === "fulfilled" && manualSplit.rest.length > 0) {
+      const missingFirstPass = checkManualKeywordCoverage(manualSplit.rest, manualSplit.price, newDesc, selectedProduct.title);
+      // If MORE than half of the "must distribute all of these" normal
+      // keywords are missing, treat this as a real compliance failure, not
+      // just a log line to notice after the fact. One retry, with a pointed
+      // reminder naming exactly which keywords were dropped last time —
+      // mirrors the FAQ coverage retry above, since a generic "try again"
+      // re-ask tends to reproduce the same gap.
+      if (missingFirstPass.length > manualSplit.rest.length / 2) {
+        descRetried = true;
+        console.warn(`⚠️  Description under-delivered on manual keywords (${missingFirstPass.length} of ${manualSplit.rest.length} missing) — retrying once with a stronger prompt.`);
+        setAgent("desc", "running", "Retrying description (missing keywords)…");
+        const keywordRetryReminder = `\n\nSTRICT REMINDER (your previous attempt did not meet this requirement): the following store-owner keywords did NOT appear anywhere in your previous output and MUST each appear verbatim or very close to verbatim somewhere in the description this time — distributed naturally across headings, opening paragraph, bullets, or FAQ, not all crammed into one spot: ${missingFirstPass.map(k=>`"${k}"`).join(", ")}.`;
+        try {
+          const retryRaw = await withTimeout(aiGenerate(descSystem, descUser + keywordRetryReminder, 6000), 45000, "Description retry");
+          const retryDesc = reformatFaqSection(ensureDeityPresent(stripHeadingSuffixes(stripTruncatedTrailingTag(cleanHTML(retryRaw))), mukhiFacts, selectedProduct.title));
+          const missingRetry = checkManualKeywordCoverage(manualSplit.rest, manualSplit.price, retryDesc, selectedProduct.title);
+          if (missingRetry.length < missingFirstPass.length) {
+            newDesc = retryDesc;
+            setAgent("desc", "done", missingRetry.length === 0 ? "✓ Done (retry, full coverage)" : `⚠ Done (retry, ${missingRetry.length} still missing)`);
+          } else {
+            console.warn(`⚠️  Description retry did not improve keyword coverage (${missingRetry.length} vs ${missingFirstPass.length} missing) — keeping the original result.`);
+            setAgent("desc", "done", `⚠ Done (${missingFirstPass.length} keyword(s) missing, retry didn't help)`);
+          }
+        } catch (eRetry) {
+          console.warn("Description keyword-coverage retry failed:", eRetry.message, "— keeping the original result.");
+          setAgent("desc", "done", `⚠ Done (${missingFirstPass.length} keyword(s) missing, retry failed)`);
+        }
+      }
     }
     const newTitle    = titleResult.status    === "fulfilled" ? titleResult.value.trim()        : selectedProduct.title;
     const newMetaDesc = metaDescResult.status === "fulfilled" ? metaDescResult.value.trim()     : "";
     const newTags     = tagsResult.status     === "fulfilled" ? tagsResult.value.trim()         : selectedProduct.tags || "";
 
-    setAgentFromResult("desc", descResult);
+    if (!descRetried) setAgentFromResult("desc", descResult);
     setAgentFromResult("title", titleResult);
     setAgentFromResult("metadesc", metaDescResult);
     setAgentFromResult("tags", tagsResult);
