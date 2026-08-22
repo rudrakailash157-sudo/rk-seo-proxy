@@ -868,12 +868,6 @@ const ANCHOR_CONTENT_UNIVERSAL = [
     heading: "Why Rudraksha Beads Are Never Perfectly Uniform",
     text: `Genuine rudraksha beads have no fixed or standardized shape. Because each bead is a natural seed, shape varies considerably from one to the next — round, oval, irregular, and even naturally square-shaped beads all occur. This same natural variation is also why rare formations occur — a naturally-formed Ganesh Rudraksha, where the bead's growth resembles Lord Ganesha's trunk and head; a Gauri Shankar, where two beads form naturally joined together; and a Garbh Gauri, where a smaller bead naturally forms attached to a larger one. None of these require carving or artificial shaping.`,
   },
-  {
-    id: "darkening_normal",
-    isFaq: true,
-    question: `Why has my rudraksha turned dark or black?`,
-    answer: `The most common reason is simply natural aging — regular contact with sweat, skin oils, and dust gradually oxidizes the bead over time, darkening it. This is completely normal and doesn't affect the bead's authenticity. Some wearers also follow a traditional practice of soaking rudraksha in ghee and milk to "condition" it — however, this soaking is itself a common cause of premature darkening, and if the bead isn't dried thoroughly afterward, it can also develop an unpleasant odor. We recommend wearing your rudraksha as received, without soaking it in ghee or milk.`,
-  },
 ];
 
 const ANCHOR_CONTENT_PRODUCT_SPECIFIC = {
@@ -1676,21 +1670,54 @@ DEPTH RULE (mandatory, applies specifically to "Traditional Benefits" and "Who S
     setAgentFromResult("tags", tagsResult);
 
     if (faqResult.status === "fulfilled") {
+      let parsedOk = false;
       try {
         generatedFAQs = parseJsonSafe(faqResult.value);
-        setAgent("faq","done",`✓ ${generatedFAQs.length} Q&As`);
+        parsedOk = true;
       } catch(e) {
-        console.warn("FAQ JSON parse failed on first attempt:", e.message, "— retrying once. Raw response (first 300 chars):", faqResult.value.slice(0, 300));
-        setAgent("faq", "running", "Retrying FAQ parse…");
+        console.warn("FAQ JSON parse failed on first attempt:", e.message, "— raw response (first 300 chars):", faqResult.value.slice(0, 300));
+      }
+
+      const coverageOk = parsedOk && faqMeetsRequirements(generatedFAQs, anchorItems);
+      if (coverageOk) {
+        setAgent("faq","done",`✓ ${generatedFAQs.length} Q&As`);
+      } else {
+        if (parsedOk) {
+          console.warn(`⚠️  FAQ output under-delivered for "${selectedProduct.title}": got ${generatedFAQs.length} pair(s), or required anchor FAQ content wasn't represented — retrying once with a stronger prompt.`);
+        }
+        setAgent("faq", "running", parsedOk ? "Retrying FAQ (insufficient coverage)…" : "Retrying FAQ parse…");
+        const anchorFaqs = (anchorItems||[]).filter(i=>i.isFaq);
+        const strictReminder = anchorFaqs.length
+          ? `\n\nSTRICT REMINDER (your previous attempt did not meet these requirements): You MUST return at least ${Math.max(6, anchorFaqs.length+3)} pairs total, and MUST include the following required anchor FAQ(s) — verbatim or lightly reworded, meaning unchanged, as their own dedicated pair(s), NOT paraphrased body/description content standing in for them: ${anchorFaqs.map(i=>`"${i.question}"`).join("; ")}.`
+          : `\n\nSTRICT REMINDER (your previous attempt did not meet these requirements): You MUST return at least 6 pairs covering: what it is, who should wear it, how to wear it, RKRTL authentication, botanical species, and buying advice (qualitative, no price figure).`;
         try {
-          const retryRaw = await withTimeout(aiGenerate(faqSystemPrompt, faqUser, 3000), 25000, "FAQ retry");
-          generatedFAQs = parseJsonSafe(retryRaw);
-          setAgent("faq","done",`✓ ${generatedFAQs.length} Q&As (retry)`);
+          const retryRaw = await withTimeout(aiGenerate(faqSystemPrompt, faqUser + strictReminder, 3000), 25000, "FAQ retry");
+          const retryParsed = parseJsonSafe(retryRaw);
+          if (faqMeetsRequirements(retryParsed, anchorItems)) {
+            generatedFAQs = retryParsed;
+            setAgent("faq","done",`✓ ${generatedFAQs.length} Q&As (retry)`);
+          } else if (retryParsed.length > (parsedOk ? generatedFAQs.length : 0)) {
+            // Retry didn't fully meet the bar but produced more than what we
+            // had (or we had nothing) — keep the better result rather than
+            // discard it, but flag it clearly so it's not mistaken for a
+            // clean pass.
+            generatedFAQs = retryParsed;
+            console.warn(`⚠️  FAQ retry still short of full requirements (${retryParsed.length} pairs) — keeping it as the best available result. Review before pushing to Schema Plus.`);
+            setAgent("faq","done",`⚠ ${generatedFAQs.length} Q&As (retry, review coverage)`);
+          } else {
+            if (!parsedOk) generatedFAQs = [];
+            console.warn(`⚠️  FAQ retry did not improve on the original result — keeping ${generatedFAQs.length} pair(s) from the first attempt.`);
+            setAgent("faq","done", generatedFAQs.length > 0 ? `⚠ ${generatedFAQs.length} Q&As (review coverage)` : "✓ 0 Q&As");
+          }
         } catch(e2) {
-          generatedFAQs = [];
+          if (!parsedOk) generatedFAQs = [];
           const fail = describeFailure(e2);
-          setAgent("faq","error",`✗ Parse failed: ${fail.short.replace(/^✗ /, "")}`, fail.full);
-          console.warn("FAQ JSON parse failed on retry too:", e2.message);
+          if (!parsedOk) {
+            setAgent("faq","error",`✗ Parse failed: ${fail.short.replace(/^✗ /, "")}`, fail.full);
+          } else {
+            setAgent("faq","done",`⚠ ${generatedFAQs.length} Q&As (retry failed, kept original)`, fail.full);
+          }
+          console.warn("FAQ retry failed:", e2.message);
         }
       }
     } else {
@@ -1806,6 +1833,36 @@ function checkManualKeywordCoverage(normalKeywords, manualPriceIntentKeywords, g
     console.log(`💰 Of your manual keywords, ${manualPriceIntentKeywords.length} were price/buying-intent and sent for consolidated FAQ handling (verbatim reproduction not expected — see PRICE ACCURACY RULE): ${manualPriceIntentKeywords.join(", ")}`);
   }
   return missing;
+}
+
+// Checks whether a generated FAQ set meets basic quantity/coverage
+// expectations. A successful JSON.parse only proves the text was valid
+// JSON — it says nothing about whether the model actually followed the "6
+// pairs, all supplied anchor FAQs included" instruction. Observed failure
+// mode: the model returns a single well-formed pair, sometimes even
+// paraphrasing a DESCRIPTION-only anchor body item (no isFaq flag) into FAQ
+// form instead of the item that's actually flagged isFaq:true — technically
+// valid JSON, badly under-delivered content. This is a coarse floor, not a
+// perfect semantic checker: minimum item count, plus a keyword-overlap check
+// that each required anchor FAQ's distinctive content shows up somewhere in
+// the set (allowing for "lightly reworded" phrasing per the prompt).
+function faqMeetsRequirements(faqs, anchorItems) {
+  const anchorFaqs = (anchorItems || []).filter(i => i.isFaq);
+  const minCount = Math.max(4, anchorFaqs.length + 3);
+  if (!Array.isArray(faqs) || faqs.length < minCount) return false;
+
+  const combinedText = faqs.map(f => `${f.q || ""} ${f.a || ""}`).join(" ").toLowerCase();
+  for (const anchor of anchorFaqs) {
+    const distinctiveWords = (anchor.answer || "")
+      .toLowerCase()
+      .replace(/[^a-z\s]/g, "")
+      .split(/\s+/)
+      .filter(w => w.length > 6);
+    const sample = distinctiveWords.slice(0, 6);
+    const hitCount = sample.filter(w => combinedText.includes(w)).length;
+    if (sample.length > 0 && hitCount < Math.ceil(sample.length / 2)) return false;
+  }
+  return true;
 }
 
 function extractJsonValue(text) {
