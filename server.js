@@ -1497,12 +1497,6 @@ const ANCHOR_CONTENT_UNIVERSAL = [
     heading: "Why Rudraksha Beads Are Never Perfectly Uniform",
     text: `Genuine rudraksha beads have no fixed or standardized shape. Because each bead is a natural seed, shape varies considerably from one to the next — round, oval, irregular, and even naturally square-shaped beads all occur. This same natural variation is also why rare formations occur — a naturally-formed Ganesh Rudraksha, where the bead's growth resembles Lord Ganesha's trunk and head; a Gauri Shankar, where two beads form naturally joined together; and a Garbh Gauri, where a smaller bead naturally forms attached to a larger one. None of these require carving or artificial shaping.`,
   },
-  {
-    id: "darkening_normal",
-    isFaq: true,
-    question: `Why has my rudraksha turned dark or black?`,
-    answer: `The most common reason is simply natural aging — regular contact with sweat, skin oils, and dust gradually oxidizes the bead over time, darkening it. This is completely normal and doesn't affect the bead's authenticity. Some wearers also follow a traditional practice of soaking rudraksha in ghee and milk to "condition" it — however, this soaking is itself a common cause of premature darkening, and if the bead isn't dried thoroughly afterward, it can also develop an unpleasant odor. We recommend wearing your rudraksha as received, without soaking it in ghee or milk.`,
-  },
 ];
 
 const ANCHOR_CONTENT_PRODUCT_SPECIFIC = {
