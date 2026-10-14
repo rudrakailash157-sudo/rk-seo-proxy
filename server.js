@@ -7,6 +7,7 @@ const path       = require("path");
 const cron       = require("node-cron");
 const nodemailer = require("nodemailer");
 const { fixRkrtlClaims, findRkrtlViolations, guardPayload, violationMessage } = require("./claimGuard");
+const { LOCKED_TITLES, getLockedTitle } = require("./titleFormat");
 let mysql = null;
 try { mysql = require("mysql2/promise"); }
 catch (e) { console.warn("⚠️  mysql2 not installed — run `npm install mysql2` to enable MySQL rank-tracker storage. Falling back to local JSON files."); }
@@ -390,6 +391,19 @@ app.put("/products/:id", async (req, res) => {
     return res.status(422).json({ error: violationMessage(guard.violations), violations: guard.violations });
   }
   try {
+    // Locked title format for single-bead pages (titleFormat.js) — whatever
+    // meta title the AI wrote, these 16 pages always get the fixed one.
+    let appliedMetaTitle = null;
+    if (typeof guard.payload.metafields_global_title_tag === "string") {
+      const h = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${id}.json?fields=handle`, { headers: { "X-Shopify-Access-Token": storedAccessToken } });
+      const hd = await h.json().catch(() => ({}));
+      const locked = getLockedTitle(hd.product && hd.product.handle);
+      if (locked) {
+        if (locked !== guard.payload.metafields_global_title_tag) console.log(`🔒 Locked meta title applied for product ${id}: "${locked}"`);
+        guard.payload.metafields_global_title_tag = locked;
+        appliedMetaTitle = locked;
+      }
+    }
     const shopifyRes = await fetch(
       `https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${id}.json`,
       {
@@ -400,7 +414,7 @@ app.put("/products/:id", async (req, res) => {
     );
     const data = await shopifyRes.json();
     if (!shopifyRes.ok) return res.status(shopifyRes.status).json({ error: "Update failed", details: data });
-    res.json({ success: true, product: data.product, rkrtlFixes: guard.changes });
+    res.json({ success: true, product: data.product, rkrtlFixes: guard.changes, appliedMetaTitle });
   } catch (err) { res.status(500).json({ error: "Failed to update product", message: err.message }); }
 });
 
@@ -634,6 +648,47 @@ app.post("/rkrtl-claims/fix-all", async (req, res) => {
     }
     res.send(claimsPage("RKRTL wording fixed", `<h1 style="color:#F0C84A;font-size:22px">Done</h1><p style="color:#9A7050">${done.filter(d => d.ok).length} fixed · ${done.filter(d => !d.ok).length} failed</p><ul style="font-size:14px">${done.map(d => `<li style="color:${d.ok ? "#7FD48A" : "#F08080"}">${d.ok ? "✅" : "❌"} ${esc(d.title)} — ${d.changes} line(s)</li>`).join("")}</ul><p><a style="color:#F0C84A" href="/rkrtl-claims">Run the check again</a></p>`));
   } catch (err) { res.status(500).send("Fix failed: " + esc(err.message)); }
+});
+
+// ─── Locked single-bead titles (titleFormat.js) ─────────────────────────────
+// GET  /title-format.json   → the table, used by the tool page for its preview
+// GET  /title-format        → report: current product title + SEO title vs the
+//                             locked one, for the 16 single-bead pages
+// POST /title-format/apply  → sets BOTH the product title and the SEO title
+//                             to the locked one. The URL (handle) never changes.
+app.get("/title-format.json", (req, res) => res.json({ titles: LOCKED_TITLES }));
+
+async function titleFormatRows() {
+  const products = await fetchAllProductsForClaims();
+  return products.filter(p => getLockedTitle(p.handle)).map(p => {
+    const locked = getLockedTitle(p.handle);
+    return { id: p.id, handle: p.handle, locked, title: p.title, seoTitle: p.metafields_global_title_tag || "", needsChange: p.title !== locked || (p.metafields_global_title_tag || "") !== locked };
+  }).sort((a, b) => a.handle.localeCompare(b.handle, undefined, { numeric: true }));
+}
+
+app.get("/title-format", async (req, res) => {
+  if (!storedAccessToken) return res.status(401).send("Not authenticated — visit /auth/install first.");
+  try {
+    const rows = await titleFormatRows();
+    const todo = rows.filter(r => r.needsChange);
+    const row = r => `<div style="background:#1A0A00;border:1px solid #2E1500;border-radius:8px;padding:12px 14px;margin-bottom:10px;font-size:13px"><div style="color:#F0C84A;font-weight:bold">${esc(r.handle)}</div><div style="margin-top:6px"><span style="color:#9A7050">Product title:</span> <span style="color:${r.title === r.locked ? "#7FD48A" : "#F08080"}">${esc(r.title)}</span></div><div><span style="color:#9A7050">SEO title:</span> <span style="color:${r.seoTitle === r.locked ? "#7FD48A" : "#F08080"}">${esc(r.seoTitle) || "(not set)"}</span></div>${r.needsChange ? `<div style="margin-top:4px"><span style="color:#9A7050">New (both):</span> <span style="color:#7FD48A">${esc(r.locked)}</span></div>` : ""}</div>`;
+    res.send(claimsPage("Bead title format", `<h1 style="color:#F0C84A;font-size:22px">Single-bead title format</h1><p style="color:#9A7050">${rows.length} bead pages found · ${todo.length} need updating. Format: Bead | Origin | X-Ray Verified | Lab Certified. Page URLs do not change.</p>${todo.length ? `<form method="POST" action="/title-format/apply" onsubmit="return confirm('Update the product title and SEO title on ${todo.length} page(s)?')"><button style="background:#D4A017;color:#0D0500;border:0;padding:12px 24px;border-radius:6px;font-size:15px;font-weight:bold;cursor:pointer">Update ${todo.length} page(s) now</button></form>` : ""}<div style="margin-top:20px">${rows.map(row).join("")}</div>`));
+  } catch (err) { res.status(500).send("Title check failed: " + esc(err.message)); }
+});
+
+app.post("/title-format/apply", async (req, res) => {
+  if (!storedAccessToken) return res.status(401).send("Not authenticated — visit /auth/install first.");
+  try {
+    const todo = (await titleFormatRows()).filter(r => r.needsChange);
+    const done = [];
+    for (const r of todo) {
+      const put = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${r.id}.json`, { method: "PUT", headers: { "X-Shopify-Access-Token": storedAccessToken, "Content-Type": "application/json" }, body: JSON.stringify({ product: { id: r.id, title: r.locked, metafields_global_title_tag: r.locked } }) });
+      done.push({ handle: r.handle, title: r.locked, ok: put.ok });
+      console.log(`${put.ok ? "✅" : "❌"} Locked title: ${r.handle} → "${r.locked}"`);
+      await new Promise(ok => setTimeout(ok, 500));
+    }
+    res.send(claimsPage("Titles updated", `<h1 style="color:#F0C84A;font-size:22px">Done</h1><p style="color:#9A7050">${done.filter(d => d.ok).length} updated · ${done.filter(d => !d.ok).length} failed</p><ul style="font-size:14px">${done.map(d => `<li style="color:${d.ok ? "#7FD48A" : "#F08080"}">${d.ok ? "✅" : "❌"} ${esc(d.title)}</li>`).join("")}</ul><p><a style="color:#F0C84A" href="/title-format">Check again</a></p>`));
+  } catch (err) { res.status(500).send("Title update failed: " + esc(err.message)); }
 });
 
 app.post("/ai/generate", async (req, res) => {
@@ -1826,7 +1881,7 @@ function scoreSEO(metaTitle, metaDesc, tags, desc, isService = false, isKarungal
   }
 
   const checks = [
-    titleLen>0, titleLen>=40&&titleLen<=75, /(rudrakailash)/i.test(metaTitle||""),
+    titleLen>0, titleLen>=40&&titleLen<=75, /(rudrakailash)/i.test(metaTitle||"") || /\| X-Ray Verified \| Lab Certified$/.test(metaTitle||""),
     descLen>0, descLen>=130&&descLen<=165, /shop|buy|order|get|explore|book/i.test(metaDesc||""),
     tagCount>0, tagCount>=6, certCheck,
     descText.length>100, descText.split(/\s+/).length>=300, /<h[23]/i.test(desc||""),
@@ -1972,7 +2027,7 @@ DEPTH RULE (mandatory, applies specifically to "Traditional Benefits" and "Who S
     ? `Write a meta title for "${product.title}" on RudraKailash.com. Max 60 chars. Include "Sphatik" or "Crystal" + "Natural" + "RudraKailash". Do NOT mention RKRTL or X-ray.`
     : isTulsi
     ? `Write a meta title for "${product.title}" on RudraKailash.com. Max 60 chars. Include "Tulsi" + "Sacred" or "Holy" + "RudraKailash". Do NOT mention RKRTL, X-ray, "certified," or "verified" — no authentication method is established for this product.`
-    : `Write a meta title for "${product.title}" on RudraKailash.com. LOCKED FORMAT — use this exact template, substituting only the mukhi/product name and the origin word, with identical wording and identical pipe spacing every time: "{Product Name} | Natural {Origin} Bead | RKRTL Certified | RudraKailash". The {Origin} word MUST be exactly this: "${origin && origin.metaShort ? origin.metaShort : "[no verified origin — omit the origin word and adjust template to \"Natural Bead\" instead]"}" — do not substitute "Nepali" or any other origin word regardless of what seems typical for Rudraksha in general; this product's verified origin is what's stated here. Example for a Nepal-origin product: "7 Mukhi Rudraksha | Natural Nepali Bead | RKRTL Certified | RudraKailash". Do not deviate from this template, add extra words, or reorder segments. Expected length is approximately 70-73 characters — this is intentional, do not shorten it to fit under 60.`;
+    : `Write a meta title for "${product.title}" on RudraKailash.com. LOCKED FORMAT — use this exact template, substituting only the mukhi/product name and the origin word, with identical wording and identical pipe spacing every time: "{Product Name} | Original {Origin} | X-Ray Verified | Lab Certified". No brand name (the site adds it). The {Origin} word MUST be exactly this: "${origin && origin.metaShort ? origin.metaShort : "[no verified origin — omit the origin segment entirely]"}" — do not substitute "Nepali" or any other origin word regardless of what seems typical for Rudraksha in general; this product's verified origin is what's stated here. Example for a Nepal-origin product: "7 Mukhi Rudraksha | Original Nepali | X-Ray Verified | Lab Certified". Do not deviate from this template, add extra words, or reorder segments. Expected length is approximately 67-74 characters — this is intentional, do not shorten it to fit under 60.`;
 
   const metaDescUser = isService
     ? `Write a meta description for "${product.title}" service on RudraKailash.com. 145–155 characters. Mention MVS Vedapadasala vadhyars, authentic Vedic tradition, and include a booking CTA. Do NOT mention RKRTL.`
@@ -2039,7 +2094,7 @@ DEPTH RULE (mandatory, applies specifically to "Traditional Benefits" and "Who S
 
   const result = {
     description: description.status === "fulfilled" ? fixRkrtlClaims(reformatFaqSection(ensureDeityPresent(stripHeadingSuffixes(stripTruncatedTrailingTag(description.value)), mukhiFacts, product.title))).text : "<p>Generation failed. Please re-run the agent.</p>",
-    metaTitle:   metaTitle.status   === "fulfilled" ? fixRkrtlClaims(metaTitle.value).text : product.title,
+    metaTitle:   getLockedTitle(product.handle) || (metaTitle.status === "fulfilled" ? fixRkrtlClaims(metaTitle.value).text : product.title),
     metaDesc:    metaDesc.status    === "fulfilled" ? fixRkrtlClaims(metaDesc.value).text  : "",
     tags:        tags.status        === "fulfilled" ? tags.value        : product.tags || "",
     faqs,
