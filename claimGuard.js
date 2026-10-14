@@ -34,6 +34,10 @@ const FIX_RULES = [
   { re: /\s*\(\s*an?\s+independent[^)]*\)/gi, to: "", label: "independent (bracket)" },
   // Old anchor heading
   { re: /Instant,\s*Independent Verification/gi, to: "Instant Online Verification", label: "independent (heading)" },
+  // Customer check, worded oddly: "can be verified instantly and independently at rkrtl.com/verify"
+  { re: /\b(verified|checked)\s+instantly\s+and\s+independently\b/gi, to: "$1 instantly by anyone", label: "verified instantly and independently" },
+  // Not about the lab at all (Karungali FAQ): "are independently among the most sacred" → "are each among the most sacred"
+  { re: /\bindependently\s+among\b/gi, to: "each among", label: "independently among" },
   // "our independent RKRTL laboratory" / "Our independent lab" → "our RKRTL laboratory" / "Our lab"
   { re: /\b(our)\s+independent\s+/gi, to: "$1 ", label: "our independent" },
   // "RKRTL's independent laboratory" → "RKRTL's laboratory"
@@ -44,6 +48,8 @@ const FIX_RULES = [
   { re: /\bindependent\s+(?=RKRTL\b)/gi, to: "", label: "independent RKRTL" },
   // "independently verified by RKRTL" → "verified by RKRTL"
   { re: /\b(i)ndependently\s+(verified\s+by)\b/gi, to: (m, i, rest) => (i === "I" ? "V" : "v") + rest.slice(1), label: "independently verified by" },
+  // "independent laboratory verification" → "RKRTL laboratory verification"
+  { re: /\bindependent\s+(laborator(?:y|ies)|lab)\s+(verification|testing|certification|analysis)\b/gi, to: "RKRTL $1 $2", label: "independent laboratory verification" },
   // "an independent gemological report" / "Independent lab certificate" → "an RKRTL lab report" / "RKRTL lab certificate"
   { re: /\b(an?\s+)?independent\s+(?:gemological\s+)?(?:lab(?:oratory)?\s+)?(report|certificate)\b/gi,
     to: (m, art, noun) => `${art ? (art[0] === "A" ? "An" : "an") + " " : ""}RKRTL lab ${noun.toLowerCase()}`, label: "independent report/certificate" },
