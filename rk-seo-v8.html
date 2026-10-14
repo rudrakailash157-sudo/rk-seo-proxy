@@ -860,8 +860,8 @@ const ANCHOR_CONTENT_UNIVERSAL = [
   },
   {
     id: "instant_verification",
-    heading: "Instant, Independent Verification",
-    text: `Every RKRTL certificate can be independently verified in seconds. Simply enter the certificate number at rkrtl.com/verify, or scan the QR code printed on the back of the PVC certificate, and the complete certification record — mukhi count, dimensions, weight, and X-ray results — is pulled up instantly from the database. There's no need to take our word for it: anyone, at any time, can confirm that a specific bead's certificate is genuine and matches what was originally recorded at the time of testing.`,
+    heading: "Instant Online Verification",
+    text: `Anyone can check an RKRTL certificate in seconds. Simply enter the certificate number at rkrtl.com/verify, or scan the QR code printed on the back of the PVC certificate, and the complete certification record — mukhi count, dimensions, weight, and X-ray results — is pulled up instantly from the database. There's no need to take our word for it: anyone, at any time, can confirm that a specific bead's certificate is genuine and matches what was originally recorded at the time of testing.`,
   },
   {
     id: "shape_variation",
@@ -1030,6 +1030,7 @@ async function pushCustomBlock() {
   } catch (e) {
     btn.textContent = "❌ Failed — Retry"; btn.disabled = false;
     console.error("Custom block push failed:", e.message);
+    if (/RKRTL/.test(e.message)) alert(e.message);
   }
 }
 
@@ -1565,7 +1566,7 @@ async function runContentGeneration() {
 - Keyword in first <h2> and first <p> within 100 words
 - E-E-A-T framing ("seekers describe…" / "seekers report…") — ZERO direct health or spiritual benefit claims
 - Cite the correct botanical species name for this specific product at least once (see SPECIES block in the user message below — do not assume Elaeocarpus ganitrus by default, some products are a verified different species)
-- Mention RKRTL as independent X-ray authentication lab
+- Mention RKRTL as the lab that X-ray tests and certifies every bead. Do not describe who owns the lab (no "in-house", "our own lab"), and never call it independent, third-party, accredited or government-approved
 - Output clean HTML only. No markdown.
 LOCKED DEFINITION (mandatory): On first mention of RKRTL anywhere in the output, write it in full exactly as "RKRTL (Kailasha Rudraksha Testing Laboratory)" — this exact string, never paraphrased, never re-expanded, never given an alternate name. Every subsequent mention in the same output may use "RKRTL" alone. Never introduce any other expansion of the acronym in any output, ever.
 OPENING PARAGRAPH ORDER (mandatory — purchase-intent page, not an encyclopedia entry): (1) lead with the primary traditional use-case or astrological remedy driving the purchase — never lead with species/botanical identification; (2) state certification per the LOCKED DEFINITION rule; (3) origin/species/structural detail comes last, as evidence for the certification claim. BANNED opening pattern: "The [N] Mukhi Rudraksha is a [N]-faced bead from the Elaeocarpus ganitrus tree…" — do not use this or close variants.
@@ -2132,7 +2133,7 @@ async function pushToShopify() {
       await fetch(PROXY_URL + "/rank/keywords", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ productId: String(selectedProduct.id), productTitle: selectedProduct.title }) });
       setTimeout(() => { pushBtn.disabled=false; pushBtn.textContent="🚀 Push to Shopify"; pushBtn.style.background=""; pushBtn.style.color=""; }, 3000);
     } else throw new Error(data.error || "Push failed");
-  } catch (e) { pushBtn.textContent = "❌ Failed — Retry"; pushBtn.disabled = false; }
+  } catch (e) { pushBtn.textContent = "❌ Failed — Retry"; pushBtn.disabled = false; if (/RKRTL/.test(e.message)) alert(e.message); }
 }
 
 function resetUI() { document.getElementById("scoreSection").classList.add("hidden"); document.getElementById("compSection").classList.add("hidden"); document.getElementById("generateSection").classList.add("hidden"); document.getElementById("resultsSection").classList.add("hidden"); resetAgents(); researchState = null; const genBtn = document.getElementById("generateBtn"); if (genBtn) { genBtn.disabled = false; genBtn.textContent = "✍️ 2. Generate Content →"; } }
