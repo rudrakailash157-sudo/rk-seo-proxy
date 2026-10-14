@@ -6,6 +6,7 @@ const fs         = require("fs");
 const path       = require("path");
 const cron       = require("node-cron");
 const nodemailer = require("nodemailer");
+const { fixRkrtlClaims, findRkrtlViolations, guardPayload, violationMessage } = require("./claimGuard");
 let mysql = null;
 try { mysql = require("mysql2/promise"); }
 catch (e) { console.warn("⚠️  mysql2 not installed — run `npm install mysql2` to enable MySQL rank-tracker storage. Falling back to local JSON files."); }
@@ -381,18 +382,25 @@ app.get("/products", async (req, res) => {
 app.put("/products/:id", async (req, res) => {
   if (!storedAccessToken) return res.status(401).json({ error: "Not authenticated" });
   const { id } = req.params;
+  // RKRTL claim guard — auto-fixes known wording, blocks anything still wrong.
+  const guard = guardPayload(req.body);
+  if (guard.changes.length) console.log(`🛡️  RKRTL wording auto-fixed for product ${id}:`, guard.changes.map(c => `"${c.from}" → "${c.to}"`).join(" | "));
+  if (guard.violations.length) {
+    console.warn(`⛔ Push blocked for product ${id} — RKRTL wording:`, guard.violations.map(v => v.snippet).join(" | "));
+    return res.status(422).json({ error: violationMessage(guard.violations), violations: guard.violations });
+  }
   try {
     const shopifyRes = await fetch(
       `https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${id}.json`,
       {
         method: "PUT",
         headers: { "X-Shopify-Access-Token": storedAccessToken, "Content-Type": "application/json" },
-        body: JSON.stringify({ product: { id, ...req.body } }),
+        body: JSON.stringify({ product: { id, ...guard.payload } }),
       }
     );
     const data = await shopifyRes.json();
     if (!shopifyRes.ok) return res.status(shopifyRes.status).json({ error: "Update failed", details: data });
-    res.json({ success: true, product: data.product });
+    res.json({ success: true, product: data.product, rkrtlFixes: guard.changes });
   } catch (err) { res.status(500).json({ error: "Failed to update product", message: err.message }); }
 });
 
@@ -485,6 +493,10 @@ app.post("/products/:id/custom-block", async (req, res) => {
   const { id } = req.params;
   const { blockId, heading, text } = req.body || {};
   if (!text || !text.trim()) return res.status(400).json({ error: "text is required" });
+  const blockViolations = findRkrtlViolations(`${heading || ""} ${text}`);
+  if (blockViolations.length) {
+    return res.status(422).json({ error: violationMessage(blockViolations.map(v => ({ field: "custom block", ...v }))), violations: blockViolations });
+  }
   try {
     const productRes = await fetch(
       `https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${id}.json?fields=id,title,body_html`,
@@ -567,6 +579,61 @@ app.delete("/products/:id/custom-block/:blockId", async (req, res) => {
     console.error(`❌ Custom block delete (${id}) threw an exception:`, err.message);
     res.status(500).json({ error: "Delete failed", message: err.message });
   }
+});
+
+// ─── RKRTL wording clean-up for pages already live ──────────────────────────
+// GET  /rkrtl-claims          → report page: every product whose live copy
+//                               calls RKRTL independent/third-party etc., with
+//                               the exact before → after for each line.
+// POST /rkrtl-claims/fix-all  → applies ONLY the deterministic rewrites from
+//                               claimGuard.js, and only to products where the
+//                               rewrite leaves nothing wrong. Products that
+//                               still need a human are listed, never touched.
+// Only the matched phrases change; every other word on the page stays as-is.
+async function fetchAllProductsForClaims() {
+  const r = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products.json?limit=250&fields=id,title,handle,body_html,metafields_global_title_tag,metafields_global_description_tag`, { headers: { "X-Shopify-Access-Token": storedAccessToken } });
+  const d = await r.json();
+  if (!r.ok) throw new Error("Shopify product fetch failed: " + JSON.stringify(d).slice(0, 300));
+  return d.products || [];
+}
+
+function scanProductClaims(p) {
+  const current = { body_html: p.body_html || "", metafields_global_title_tag: p.metafields_global_title_tag || "", metafields_global_description_tag: p.metafields_global_description_tag || "" };
+  const before = ["body_html", "metafields_global_title_tag", "metafields_global_description_tag"].flatMap(f => findRkrtlViolations(current[f]).map(v => ({ field: f, ...v })));
+  const guard = guardPayload(current);
+  const changedFields = Object.keys(current).filter(f => guard.payload[f] !== current[f]);
+  // Listed if anything is wrong OR the rewrite rules would change something
+  // (e.g. "our in-house lab" wording, which isn't wrong but is being removed).
+  if (!before.length && !changedFields.length) return null;
+  return { id: p.id, title: p.title, handle: p.handle, found: before, changes: guard.changes, remaining: guard.violations, autoFixable: guard.violations.length === 0 && changedFields.length > 0, fixedPayload: Object.fromEntries(changedFields.map(f => [f, guard.payload[f]])) };
+}
+
+const esc = s => String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const claimsPage = (title, inner) => `<!DOCTYPE html><html><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>${title}</title></head><body style="margin:0;background:#0D0500;color:#F5E6C8;font-family:Georgia,serif"><div style="max-width:900px;margin:0 auto;padding:24px 16px">${inner}</div></body></html>`;
+
+app.get("/rkrtl-claims", async (req, res) => {
+  if (!storedAccessToken) return res.status(401).send("Not authenticated — visit /auth/install first.");
+  try {
+    const results = (await fetchAllProductsForClaims()).map(scanProductClaims).filter(Boolean);
+    const fixable = results.filter(r => r.autoFixable), manual = results.filter(r => !r.autoFixable);
+    const card = r => `<div style="background:#1A0A00;border:1px solid #2E1500;border-radius:8px;padding:14px 16px;margin-bottom:12px"><div style="font-weight:bold"><a style="color:#F0C84A" href="https://www.rudrakailash.com/products/${esc(r.handle)}" target="_blank">${esc(r.title)}</a></div>${r.changes.map(c => `<div style="font-size:13px;margin-top:6px"><span style="color:#F08080">${esc(c.from)}</span> → <span style="color:#7FD48A">${esc(c.to) || "(removed)"}</span></div>`).join("")}${r.remaining.map(v => `<div style="font-size:13px;margin-top:6px;color:#F0A050">Needs a manual edit: ${esc(v.snippet)}</div>`).join("")}</div>`;
+    res.send(claimsPage("RKRTL wording check", `<h1 style="color:#F0C84A;font-size:22px">RKRTL wording check</h1><p style="color:#9A7050">${results.length} product(s) have RKRTL wording to fix: independent or third-party claims, wrong lab names, or "in-house lab" wording. ${fixable.length} can be fixed automatically; ${manual.length} need a manual edit.</p>${fixable.length ? `<form method="POST" action="/rkrtl-claims/fix-all" onsubmit="return confirm('Apply these ${fixable.length} fixes to the live product pages?')"><button style="background:#D4A017;color:#0D0500;border:0;padding:12px 24px;border-radius:6px;font-size:15px;font-weight:bold;cursor:pointer">Fix ${fixable.length} product(s) now</button></form>` : ""}<h2 style="color:#F5E6C8;font-size:17px;margin-top:28px">Fixed automatically</h2>${fixable.map(card).join("") || "<p style='color:#9A7050'>None.</p>"}<h2 style="color:#F5E6C8;font-size:17px;margin-top:28px">Need a manual edit</h2>${manual.map(card).join("") || "<p style='color:#9A7050'>None.</p>"}`));
+  } catch (err) { res.status(500).send("Scan failed: " + esc(err.message)); }
+});
+
+app.post("/rkrtl-claims/fix-all", async (req, res) => {
+  if (!storedAccessToken) return res.status(401).send("Not authenticated — visit /auth/install first.");
+  try {
+    const results = (await fetchAllProductsForClaims()).map(scanProductClaims).filter(r => r && r.autoFixable);
+    const done = [];
+    for (const r of results) {
+      const put = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${r.id}.json`, { method: "PUT", headers: { "X-Shopify-Access-Token": storedAccessToken, "Content-Type": "application/json" }, body: JSON.stringify({ product: { id: r.id, ...r.fixedPayload } }) });
+      done.push({ title: r.title, ok: put.ok, changes: r.changes.length });
+      console.log(`${put.ok ? "✅" : "❌"} RKRTL wording fix: ${r.title} (${r.changes.length} change(s))`);
+      await new Promise(ok => setTimeout(ok, 500));
+    }
+    res.send(claimsPage("RKRTL wording fixed", `<h1 style="color:#F0C84A;font-size:22px">Done</h1><p style="color:#9A7050">${done.filter(d => d.ok).length} fixed · ${done.filter(d => !d.ok).length} failed</p><ul style="font-size:14px">${done.map(d => `<li style="color:${d.ok ? "#7FD48A" : "#F08080"}">${d.ok ? "✅" : "❌"} ${esc(d.title)} — ${d.changes} line(s)</li>`).join("")}</ul><p><a style="color:#F0C84A" href="/rkrtl-claims">Run the check again</a></p>`));
+  } catch (err) { res.status(500).send("Fix failed: " + esc(err.message)); }
 });
 
 app.post("/ai/generate", async (req, res) => {
@@ -1489,8 +1556,8 @@ const ANCHOR_CONTENT_UNIVERSAL = [
   },
   {
     id: "instant_verification",
-    heading: "Instant, Independent Verification",
-    text: `Every RKRTL certificate can be independently verified in seconds. Simply enter the certificate number at rkrtl.com/verify, or scan the QR code printed on the back of the PVC certificate, and the complete certification record — mukhi count, dimensions, weight, and X-ray results — is pulled up instantly from the database. There's no need to take our word for it: anyone, at any time, can confirm that a specific bead's certificate is genuine and matches what was originally recorded at the time of testing.`,
+    heading: "Instant Online Verification",
+    text: `Anyone can check an RKRTL certificate in seconds. Simply enter the certificate number at rkrtl.com/verify, or scan the QR code printed on the back of the PVC certificate, and the complete certification record — mukhi count, dimensions, weight, and X-ray results — is pulled up instantly from the database. There's no need to take our word for it: anyone, at any time, can confirm that a specific bead's certificate is genuine and matches what was originally recorded at the time of testing.`,
   },
   {
     id: "shape_variation",
@@ -1971,9 +2038,9 @@ DEPTH RULE (mandatory, applies specifically to "Traditional Benefits" and "Who S
   }
 
   const result = {
-    description: description.status === "fulfilled" ? reformatFaqSection(ensureDeityPresent(stripHeadingSuffixes(stripTruncatedTrailingTag(description.value)), mukhiFacts, product.title)) : "<p>Generation failed. Please re-run the agent.</p>",
-    metaTitle:   metaTitle.status   === "fulfilled" ? metaTitle.value   : product.title,
-    metaDesc:    metaDesc.status    === "fulfilled" ? metaDesc.value    : "",
+    description: description.status === "fulfilled" ? fixRkrtlClaims(reformatFaqSection(ensureDeityPresent(stripHeadingSuffixes(stripTruncatedTrailingTag(description.value)), mukhiFacts, product.title))).text : "<p>Generation failed. Please re-run the agent.</p>",
+    metaTitle:   metaTitle.status   === "fulfilled" ? fixRkrtlClaims(metaTitle.value).text : product.title,
+    metaDesc:    metaDesc.status    === "fulfilled" ? fixRkrtlClaims(metaDesc.value).text  : "",
     tags:        tags.status        === "fulfilled" ? tags.value        : product.tags || "",
     faqs,
   };
@@ -1997,8 +2064,12 @@ DEPTH RULE (mandatory, applies specifically to "Traditional Benefits" and "Who S
 app.get("/approve/:token", async (req, res) => {
   const approval = pendingApprovals.get(req.params.token);
   if (!approval) return res.send(`<html><body style="font-family:sans-serif;background:#0D0500;color:#F5E6C8;display:flex;align-items:center;justify-content:center;height:100vh"><div style="text-align:center;padding:40px;border:1px solid #7B1C1C;border-radius:12px;background:#1A0A00;"><div style="font-size:48px">❌</div><h2 style="color:#F08080;margin:16px 0">Link Expired</h2><p style="color:#9A7050">This approval link has expired or was already used.</p></div></body></html>`);
+  const guard = guardPayload(approval.payload);
+  if (guard.violations.length) {
+    return res.send(`<html><body style="font-family:sans-serif;background:#0D0500;display:flex;align-items:center;justify-content:center;min-height:100vh"><div style="text-align:left;padding:40px;border:1px solid #7B1C1C;border-radius:12px;background:#1A0A00;max-width:600px"><div style="font-size:48px;text-align:center">⛔</div><h2 style="color:#F08080;text-align:center">Not pushed: RKRTL wording</h2><p style="color:#9A7050">${approval.productTitle} describes RKRTL in a way that isn't accurate. Edit it in the tool and push from there.</p><ul style="color:#F5E6C8;font-size:13px">${guard.violations.map(v => `<li>${escapeFaqText(v.snippet)}</li>`).join("")}</ul></div></body></html>`);
+  }
   try {
-    const shopifyRes = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${approval.productId}.json`, { method:"PUT", headers:{"X-Shopify-Access-Token":storedAccessToken,"Content-Type":"application/json"}, body:JSON.stringify({product:{id:approval.productId,...approval.payload}}) });
+    const shopifyRes = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${approval.productId}.json`, { method:"PUT", headers:{"X-Shopify-Access-Token":storedAccessToken,"Content-Type":"application/json"}, body:JSON.stringify({product:{id:approval.productId,...guard.payload}}) });
     const data = await shopifyRes.json();
     pendingApprovals.delete(req.params.token);
     if (shopifyRes.ok) {
@@ -2038,8 +2109,10 @@ app.get("/approve-all/:token", async (req, res) => {
   for (const token of bulk.productTokens) {
     const approval = pendingApprovals.get(token);
     if (!approval) { failed++; continue; }
+    const guard = guardPayload(approval.payload);
+    if (guard.violations.length) { failed++; details.push(`<li style="color:#F08080;padding:4px 0">⛔ ${approval.productTitle} — not pushed: RKRTL wording ("${guard.violations[0].term}")</li>`); continue; }
     try {
-      const shopifyRes = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${approval.productId}.json`, { method:"PUT", headers:{"X-Shopify-Access-Token":storedAccessToken,"Content-Type":"application/json"}, body:JSON.stringify({ product:{ id:approval.productId, ...approval.payload } }) });
+      const shopifyRes = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${approval.productId}.json`, { method:"PUT", headers:{"X-Shopify-Access-Token":storedAccessToken,"Content-Type":"application/json"}, body:JSON.stringify({ product:{ id:approval.productId, ...guard.payload } }) });
       if (shopifyRes.ok) { pushed++; details.push(`<li style="color:#7FD48A;padding:4px 0">✅ ${approval.productTitle} — SEO: ${approval.scoreBefore} → ${approval.scoreAfter}</li>`); pendingApprovals.delete(token); }
       else { failed++; details.push(`<li style="color:#F08080;padding:4px 0">❌ ${approval.productTitle} — Push failed</li>`); }
     } catch(e) { failed++; details.push(`<li style="color:#F08080;padding:4px 0">❌ ${approval.productTitle} — ${e.message}</li>`); }
