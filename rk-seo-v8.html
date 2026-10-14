@@ -1609,7 +1609,7 @@ DEPTH RULE (mandatory, applies specifically to "Traditional Benefits" and "Who S
       ? `Meta title for "${selectedProduct.title}" on RudraKailash.com. Max 60 chars. Include "Sphatik" or "Crystal" + "Natural" + "RudraKailash". Do NOT mention RKRTL or X-ray.`
       : isTulsi
       ? `Meta title for "${selectedProduct.title}" on RudraKailash.com. Max 60 chars. Include "Tulsi" + "Sacred" or "Holy" + "RudraKailash". Do NOT mention RKRTL, X-ray, "certified," or "verified" — no authentication method is established for this product.`
-      : `Meta title for "${selectedProduct.title}" on RudraKailash.com. LOCKED FORMAT — use this exact template, substituting only the product name and the origin word, with identical wording and identical pipe spacing every time: "{Product Name} | Natural {Origin} Bead | RKRTL Certified | RudraKailash". The {Origin} word MUST be exactly this: "${origin && origin.metaShort ? origin.metaShort : "[no verified origin for this product — omit the origin word entirely and use \"Natural Bead\" instead of \"Natural {Origin} Bead\"]"}" — do not substitute "Nepali" or any other origin word regardless of what seems typical for Rudraksha in general; this specific product's verified origin is what's stated here, and different products on this site legitimately have different origins. Example for a Nepal-origin product: "7 Mukhi Rudraksha | Natural Nepali Bead | RKRTL Certified | RudraKailash". Do not deviate from this template, add extra words, or reorder segments. Expected length is approximately 70-73 characters — this is intentional, do not shorten it to fit under 60. STRICT RULE: NO deity names (no Shiva, Vishnu, Ganesha, Hanuman, etc.) — this format is already deity-free; keep it that way.`;
+      : `Meta title for "${selectedProduct.title}" on RudraKailash.com. LOCKED FORMAT — use this exact template, substituting only the product name and the origin word, with identical wording and identical pipe spacing every time: "{Product Name} | Original {Origin} | X-Ray Verified | Lab Certified". No brand name (the site adds it). The {Origin} word MUST be exactly this: "${origin && origin.metaShort ? origin.metaShort : "[no verified origin for this product — omit the origin segment entirely]"}" — do not substitute "Nepali" or any other origin word regardless of what seems typical for Rudraksha in general; this specific product's verified origin is what's stated here, and different products on this site legitimately have different origins. Example for a Nepal-origin product: "7 Mukhi Rudraksha | Original Nepali | X-Ray Verified | Lab Certified". Do not deviate from this template, add extra words, or reorder segments. Expected length is approximately 67-74 characters — this is intentional, do not shorten it to fit under 60. STRICT RULE: NO deity names (no Shiva, Vishnu, Ganesha, Hanuman, etc.) — this format is already deity-free; keep it that way.`;
 
     const metaDescUser = isService
       ? `Meta description for "${selectedProduct.title}" service on RudraKailash.com. 145–155 characters. Mention MVS Vedapadasala vadhyars, authentic Vedic tradition, booking CTA. Do NOT mention RKRTL.`
@@ -1756,7 +1756,13 @@ DEPTH RULE (mandatory, applies specifically to "Traditional Benefits" and "Who S
 
     document.getElementById("currentMetaTitle").textContent = selectedProduct.metafields_global_title_tag || "(not set)";
     document.getElementById("currentMetaDesc").textContent  = selectedProduct.metafields_global_description_tag || "(not set)";
-    document.getElementById("newMetaTitle").value = newTitle;
+    // Single-bead pages use the fixed title from titleFormat.js on the server.
+    let lockedTitle = null;
+    try {
+      const lt = await fetch(`${PROXY_URL}/title-format.json`).then(r => r.json());
+      lockedTitle = (lt.titles || {})[String(selectedProduct.handle || "").toLowerCase()] || null;
+    } catch (e) { console.warn("Locked title lookup failed:", e.message); }
+    document.getElementById("newMetaTitle").value = lockedTitle || newTitle;
     document.getElementById("newMetaDesc").value  = newMetaDesc;
     document.getElementById("newTags").value      = newTags;
     document.getElementById("descPreview").innerHTML = newDesc;
@@ -2098,7 +2104,7 @@ function scoreSEO(metaTitle, metaDesc, tags, desc, isService = false, isKarungal
     descCertCheck = /rkrtl|certified|x-ray/i.test(descText);
   }
   const checks = [
-    titleLen>0, titleLen>=40&&titleLen<=75, /(rudrakailash)/i.test(metaTitle||""),
+    titleLen>0, titleLen>=40&&titleLen<=75, /(rudrakailash)/i.test(metaTitle||"") || /\| X-Ray Verified \| Lab Certified$/.test(metaTitle||""),
     descLen>0, descLen>=130&&descLen<=165, /shop|buy|order|get|explore|book/i.test(metaDesc||""),
     tagCount>0, tagCount>=6, certCheck,
     descText.length>100, descText.split(/\s+/).length>=300, /<h[23]/i.test(desc||""),
@@ -2129,6 +2135,7 @@ async function pushToShopify() {
     const res  = await fetch(PROXY_URL + "/products/" + selectedProduct.id, { method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload) });
     const data = await res.json();
     if (data.success) {
+      if (data.appliedMetaTitle) { document.getElementById("newMetaTitle").value = data.appliedMetaTitle; updateCharCount("newMetaTitle","metaTitleCount"); }
       pushBtn.textContent = "✅ Pushed!"; pushBtn.style.background = "var(--green)"; pushBtn.style.color = "#000";
       await fetch(PROXY_URL + "/rank/keywords", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ productId: String(selectedProduct.id), productTitle: selectedProduct.title }) });
       setTimeout(() => { pushBtn.disabled=false; pushBtn.textContent="🚀 Push to Shopify"; pushBtn.style.background=""; pushBtn.style.color=""; }, 3000);
