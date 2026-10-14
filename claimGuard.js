@@ -118,6 +118,9 @@ const ALLOWED_CONTEXTS = [
   /\bindependently\s+verifiable\b/gi,
   /\bnot\s+(an?\s+)?independent\b[^.]*/gi,       // "not an independent third-party lab"
   /\bnot\s+(a\s+)?third[-\s]party\b[^.]*/gi,
+  // The authenticity guarantee: an outside lab the CUSTOMER chooses
+  // ("if any independent … laboratory finds this bead non-authentic, we refund…")
+  /[^.<>]*\bindependent\b[^.<>]*\b(?:non-authentic|not authentic|inauthentic)\b[^.<>]*/gi,
 ];
 
 function stripTags(html) {
