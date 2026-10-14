@@ -50,6 +50,8 @@ const ok = [
  "Scan the QR code to verify it independently.",
  "The certificate is independently verifiable.",
  "RKRTL is our own lab. It is not an independent third-party lab, and we say so plainly.",
+ "If any independent gemmological or Rudraksha testing laboratory finds this bead non-authentic, we refund the full purchase price. There is no time limit.",
+ "If an independent laboratory finds the bead non-authentic, we return the full purchase price.",
  "Every bead is X-ray tested and certified by RKRTL (Kailasha Rudraksha Testing Laboratory).",
 ];
 for (const s of ok) { const r=fixRkrtlClaims(s); const v=findRkrtlViolations(r.text); if (r.text!==s||v.length){fail++;console.log("WRONGLY CHANGED/FLAGGED:",s,"=>",r.text,v);} }
