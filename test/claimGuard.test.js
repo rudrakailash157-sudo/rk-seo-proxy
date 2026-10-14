@@ -33,6 +33,9 @@ const bad = [
  "undergoes rigorous X-ray imaging and microscopy at our independent RKRTL laboratory.",
  "RKRTL's independent X-ray imaging and microscopic analysis confirm the bead.",
  "A fair price represents the cost of ethical sourcing, skilled capping and finishing and third party validation.",
+ "Every certificate can be verified instantly and independently at rkrtl.com/verify.",
+ "Beads undergo testing that confirms natural origin through independent laboratory verification.",
+ "Both Karungali and Rudraksha are independently among the most sacred materials in Shaiva tradition.",
 ];
 let fail=0;
 for (const s of bad) {
@@ -68,6 +71,8 @@ const inHouse = [
   "Our relationships with the same farming families in Nepal go back nine years. Every bead is X-ray tested and certified by RKRTL, and every silver cap is fitted by hand in our own workshop."],
  ["<p>RudraKailash is run by one person, Subramani Lakshmanan, who has bought Rudraksha from the same farming families in Nepal for nine years, tests each bead himself at the RKRTL lab, and fits every silver cap by hand. Nepali 6 Mukhi beads are larger.</p>",
   "<p>Our relationships with the same farming families in Nepal go back nine years. Every bead is X-ray tested and certified by RKRTL, and every silver cap is fitted by hand in our own workshop. Nepali 6 Mukhi beads are larger.</p>"],
+ ["RKRTL's independent laboratory verification includes bead density analysis.", "RKRTL's laboratory verification includes bead density analysis."],
+ ["Every certificate can be verified instantly and independently at rkrtl.com/verify.", "Every certificate can be verified instantly by anyone at rkrtl.com/verify."],
  ["All silver and metal capping work is done in-house.", "All silver and metal capping work is done in-house."],
  ["Silver capping, done by hand in our own workshop after certification.", "Silver capping, done by hand in our own workshop after certification."],
 ];
