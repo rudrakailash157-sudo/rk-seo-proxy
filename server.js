@@ -8,6 +8,7 @@ const cron       = require("node-cron");
 const nodemailer = require("nodemailer");
 const { fixRkrtlClaims, findRkrtlViolations, guardPayload, violationMessage } = require("./claimGuard");
 const { LOCKED_TITLES, getLockedTitle } = require("./titleFormat");
+const { GUARANTEE_BLOCK } = require("./guaranteeBlock");
 let mysql = null;
 try { mysql = require("mysql2/promise"); }
 catch (e) { console.warn("⚠️  mysql2 not installed — run `npm install mysql2` to enable MySQL rank-tracker storage. Falling back to local JSON files."); }
@@ -380,6 +381,30 @@ app.get("/products", async (req, res) => {
   } catch (err) { res.status(500).json({ error: "Failed to fetch products", message: err.message }); }
 });
 
+// ─── Rules every single-bead page keeps, whatever gets pushed ──────────────
+// For the 16 bead pages (titleFormat.js): the SEO title is always the locked
+// one, and the authenticity guarantee block is always present in the body.
+// Mutates payload in place. Other products are left untouched.
+async function enforceBeadPageRules(productId, payload) {
+  const wantsTitle = typeof payload.metafields_global_title_tag === "string";
+  const wantsBody  = typeof payload.body_html === "string";
+  if (!wantsTitle && !wantsBody) return { appliedMetaTitle: null };
+  const h  = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${productId}.json?fields=handle`, { headers: { "X-Shopify-Access-Token": storedAccessToken } });
+  const hd = await h.json().catch(() => ({}));
+  const handle = hd.product && hd.product.handle;
+  const locked = getLockedTitle(handle);
+  if (!locked) return { appliedMetaTitle: null };
+  if (wantsTitle) {
+    if (locked !== payload.metafields_global_title_tag) console.log(`🔒 Locked meta title applied for ${handle}: "${locked}"`);
+    payload.metafields_global_title_tag = locked;
+  }
+  if (wantsBody && !payload.body_html.includes(customBlockMarkers(GUARANTEE_BLOCK.id).start)) {
+    payload.body_html = upsertCustomBlock(payload.body_html, GUARANTEE_BLOCK.id, GUARANTEE_BLOCK.heading, GUARANTEE_BLOCK.text);
+    console.log(`🛡️  Authenticity guarantee block added for ${handle}`);
+  }
+  return { appliedMetaTitle: wantsTitle ? locked : null };
+}
+
 app.put("/products/:id", async (req, res) => {
   if (!storedAccessToken) return res.status(401).json({ error: "Not authenticated" });
   const { id } = req.params;
@@ -391,19 +416,8 @@ app.put("/products/:id", async (req, res) => {
     return res.status(422).json({ error: violationMessage(guard.violations), violations: guard.violations });
   }
   try {
-    // Locked title format for single-bead pages (titleFormat.js) — whatever
-    // meta title the AI wrote, these 16 pages always get the fixed one.
-    let appliedMetaTitle = null;
-    if (typeof guard.payload.metafields_global_title_tag === "string") {
-      const h = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${id}.json?fields=handle`, { headers: { "X-Shopify-Access-Token": storedAccessToken } });
-      const hd = await h.json().catch(() => ({}));
-      const locked = getLockedTitle(hd.product && hd.product.handle);
-      if (locked) {
-        if (locked !== guard.payload.metafields_global_title_tag) console.log(`🔒 Locked meta title applied for product ${id}: "${locked}"`);
-        guard.payload.metafields_global_title_tag = locked;
-        appliedMetaTitle = locked;
-      }
-    }
+    // Single-bead page rules: locked title + authenticity guarantee block.
+    const { appliedMetaTitle } = await enforceBeadPageRules(id, guard.payload);
     const shopifyRes = await fetch(
       `https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${id}.json`,
       {
@@ -689,6 +703,40 @@ app.post("/title-format/apply", async (req, res) => {
     }
     res.send(claimsPage("Titles updated", `<h1 style="color:#F0C84A;font-size:22px">Done</h1><p style="color:#9A7050">${done.filter(d => d.ok).length} updated · ${done.filter(d => !d.ok).length} failed</p><ul style="font-size:14px">${done.map(d => `<li style="color:${d.ok ? "#7FD48A" : "#F08080"}">${d.ok ? "✅" : "❌"} ${esc(d.title)}</li>`).join("")}</ul><p><a style="color:#F0C84A" href="/title-format">Check again</a></p>`));
   } catch (err) { res.status(500).send("Title update failed: " + esc(err.message)); }
+});
+
+// ─── Authenticity guarantee on the live bead pages ─────────────────────────
+// GET  /guarantee-block        → which of the 16 bead pages have it, + preview
+// POST /guarantee-block/apply  → adds/updates it on every bead page (before the
+//                                FAQ). Re-running is safe: it replaces its own
+//                                block, never duplicates it.
+app.get("/guarantee-block", async (req, res) => {
+  if (!storedAccessToken) return res.status(401).send("Not authenticated — visit /auth/install first.");
+  try {
+    const rows = (await fetchAllProductsForClaims()).filter(p => getLockedTitle(p.handle)).map(p => {
+      const want = upsertCustomBlock(p.body_html || "", GUARANTEE_BLOCK.id, GUARANTEE_BLOCK.heading, GUARANTEE_BLOCK.text);
+      return { handle: p.handle, title: p.title, has: (p.body_html || "").includes(customBlockMarkers(GUARANTEE_BLOCK.id).start), upToDate: want === (p.body_html || "") };
+    }).sort((a, b) => a.handle.localeCompare(b.handle, undefined, { numeric: true }));
+    const todo = rows.filter(r => !r.upToDate);
+    res.send(claimsPage("Authenticity guarantee", `<h1 style="color:#F0C84A;font-size:22px">Authenticity guarantee on bead pages</h1><div style="background:#1A0A00;border:1px solid #D4A017;border-radius:8px;padding:14px 16px;margin:12px 0"><h3 style="margin:0 0 8px;color:#F5E6C8">${GUARANTEE_BLOCK.heading}</h3><p style="margin:0;font-size:14px;line-height:1.6">${GUARANTEE_BLOCK.text.replace('<a ', '<a style="color:#F0C84A" ')}</p></div><p style="color:#9A7050">${rows.length} bead pages found · ${todo.length} need it added or updated. It goes just before the FAQ section; nothing else on the page changes.</p>${todo.length ? `<form method="POST" action="/guarantee-block/apply" onsubmit="return confirm('Add the guarantee to ${todo.length} page(s)?')"><button style="background:#D4A017;color:#0D0500;border:0;padding:12px 24px;border-radius:6px;font-size:15px;font-weight:bold;cursor:pointer">Add to ${todo.length} page(s) now</button></form>` : ""}<ul style="font-size:14px;margin-top:16px">${rows.map(r => `<li style="color:${r.upToDate ? "#7FD48A" : "#F08080"}">${r.upToDate ? "✅" : "➕"} ${esc(r.title)}</li>`).join("")}</ul>`));
+  } catch (err) { res.status(500).send("Check failed: " + esc(err.message)); }
+});
+
+app.post("/guarantee-block/apply", async (req, res) => {
+  if (!storedAccessToken) return res.status(401).send("Not authenticated — visit /auth/install first.");
+  try {
+    const products = (await fetchAllProductsForClaims()).filter(p => getLockedTitle(p.handle));
+    const done = [];
+    for (const p of products) {
+      const updated = upsertCustomBlock(p.body_html || "", GUARANTEE_BLOCK.id, GUARANTEE_BLOCK.heading, GUARANTEE_BLOCK.text);
+      if (updated === (p.body_html || "")) continue;
+      const put = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${p.id}.json`, { method: "PUT", headers: { "X-Shopify-Access-Token": storedAccessToken, "Content-Type": "application/json" }, body: JSON.stringify({ product: { id: p.id, body_html: updated } }) });
+      done.push({ title: p.title, ok: put.ok });
+      console.log(`${put.ok ? "✅" : "❌"} Guarantee block: ${p.handle}`);
+      await new Promise(ok => setTimeout(ok, 500));
+    }
+    res.send(claimsPage("Guarantee added", `<h1 style="color:#F0C84A;font-size:22px">Done</h1><p style="color:#9A7050">${done.filter(d => d.ok).length} updated · ${done.filter(d => !d.ok).length} failed</p><ul style="font-size:14px">${done.map(d => `<li style="color:${d.ok ? "#7FD48A" : "#F08080"}">${d.ok ? "✅" : "❌"} ${esc(d.title)}</li>`).join("")}</ul><p><a style="color:#F0C84A" href="/guarantee-block">Check again</a></p>`));
+  } catch (err) { res.status(500).send("Update failed: " + esc(err.message)); }
 });
 
 app.post("/ai/generate", async (req, res) => {
@@ -1503,7 +1551,7 @@ function upsertCustomBlock(currentBodyHtml, blockId, heading, text) {
   }
 
   const container = `${RK_CUSTOM_BLOCKS_CONTAINER_START}\n${newBlockHtml}\n${RK_CUSTOM_BLOCKS_CONTAINER_END}`;
-  const faqHeadingMatch = html.match(/<h3>\s*Frequently Asked Questions[^<]*<\/h3>/i);
+  const faqHeadingMatch = html.match(/<h[23][^>]*>\s*Frequently Asked Questions[^<]*<\/h[23]>/i);
   if (faqHeadingMatch) {
     return html.slice(0, faqHeadingMatch.index) + container + "\n" + html.slice(faqHeadingMatch.index);
   }
@@ -2124,6 +2172,7 @@ app.get("/approve/:token", async (req, res) => {
     return res.send(`<html><body style="font-family:sans-serif;background:#0D0500;display:flex;align-items:center;justify-content:center;min-height:100vh"><div style="text-align:left;padding:40px;border:1px solid #7B1C1C;border-radius:12px;background:#1A0A00;max-width:600px"><div style="font-size:48px;text-align:center">⛔</div><h2 style="color:#F08080;text-align:center">Not pushed: RKRTL wording</h2><p style="color:#9A7050">${approval.productTitle} describes RKRTL in a way that isn't accurate. Edit it in the tool and push from there.</p><ul style="color:#F5E6C8;font-size:13px">${guard.violations.map(v => `<li>${escapeFaqText(v.snippet)}</li>`).join("")}</ul></div></body></html>`);
   }
   try {
+    await enforceBeadPageRules(approval.productId, guard.payload);
     const shopifyRes = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${approval.productId}.json`, { method:"PUT", headers:{"X-Shopify-Access-Token":storedAccessToken,"Content-Type":"application/json"}, body:JSON.stringify({product:{id:approval.productId,...guard.payload}}) });
     const data = await shopifyRes.json();
     pendingApprovals.delete(req.params.token);
@@ -2167,6 +2216,7 @@ app.get("/approve-all/:token", async (req, res) => {
     const guard = guardPayload(approval.payload);
     if (guard.violations.length) { failed++; details.push(`<li style="color:#F08080;padding:4px 0">⛔ ${approval.productTitle} — not pushed: RKRTL wording ("${guard.violations[0].term}")</li>`); continue; }
     try {
+      await enforceBeadPageRules(approval.productId, guard.payload);
       const shopifyRes = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/products/${approval.productId}.json`, { method:"PUT", headers:{"X-Shopify-Access-Token":storedAccessToken,"Content-Type":"application/json"}, body:JSON.stringify({ product:{ id:approval.productId, ...guard.payload } }) });
       if (shopifyRes.ok) { pushed++; details.push(`<li style="color:#7FD48A;padding:4px 0">✅ ${approval.productTitle} — SEO: ${approval.scoreBefore} → ${approval.scoreAfter}</li>`); pendingApprovals.delete(token); }
       else { failed++; details.push(`<li style="color:#F08080;padding:4px 0">❌ ${approval.productTitle} — Push failed</li>`); }
